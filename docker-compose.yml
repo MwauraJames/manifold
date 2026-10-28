@@ -1,0 +1,97 @@
+# Put this file in the PROJECT ROOT (Study_Assistant/), next to pyproject.toml,
+# not inside app/.
+name: study-assistant
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.2       # pin to the version you tested, see notes
+    restart: unless-stopped
+    ports:                             # host access only (dashboard, uv run on the host)
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - ./app/qdrant_storage:/qdrant/storage     # your existing vector data
+    healthcheck:                       # the image has no curl, so probe the port with bash
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mongodb:
+    image: mongodb/mongodb-community-server@sha256:0e6cda495c8fd80addf25647b8fdb0ebe9de294cb94461298962c723507f3eac # pin to the version you tested
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    env_file:
+      # API keys (LlamaCloud, Cohere, Groq, LangSmith...). Change the path if your .env
+      # is in the project root instead of app/.
+      - path: ./app/.env
+        required: true
+    environment:
+      # Inside the compose network the databases are reached by SERVICE NAME, not localhost.
+      # These override any localhost values from the .env file above.
+      # The names must match the fields in your config.py Settings class
+      # (pydantic-settings maps field qdrant_url to QDRANT_URL, and so on).
+      QDRANT_URL: http://qdrant:6333
+      MONGO_URI: mongodb://mongodb:27017
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Bind mounts so you can still open these folders on your machine.
+      - ./app/models:/srv/app/models   # FastEmbed model cache, avoids re-downloading
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s   
+
+# Paste this under `services:` in the root docker-compose.yml (indent 2 spaces, like the others)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Streamlit's server calls the backend, so use the SERVICE NAME, not localhost.
+      API_URL: http://api:8000
+      DB_PATH: /srv/frontend/data/app.db
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./frontend/data:/srv/frontend/data      # keeps accounts and chats across rebuilds
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s             # model loading on first start can be slow
+
+volumes:
+  mongo_data:
+  mongo_config:
