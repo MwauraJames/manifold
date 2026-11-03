@@ -2,7 +2,7 @@ import qdrant_client
 from qdrant_client.http import models as rest
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
-from config import Settings
+from configs.config import Settings
 
 settings = Settings()
 
