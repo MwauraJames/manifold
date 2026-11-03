@@ -5,7 +5,7 @@ from langsmith import traceable
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes
 
-from config import Settings
+from configs.config import Settings
 
 settings = Settings()
 
