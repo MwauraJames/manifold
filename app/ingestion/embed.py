@@ -1,5 +1,5 @@
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
-from config import Settings
+from configs.config import Settings
 
 settings = Settings()
 
