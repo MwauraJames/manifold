@@ -20,7 +20,10 @@ _GLOBAL_SYNTHESIS_SIGNALS_RE = re.compile(
     r"(possible|practice|sample|open[- ]ended|multiple[- ]choice|revision)\s+questions?|"
     r"generate\s+.*?\bquestions?|"
     r"ask\s+me\s+questions?|"
-    r"(summarize|summary|overview|outline|key\s+takeaways|study\s+guide)\b.*?\b(unit|doc|document|lecture|pdf|course|notes|subject|everything|all|whole|entire)"
+    r"(summarize|summary|overview|outline|key\s+takeaways|study\s+guide)\b.*?\b(unit|doc|document|lecture|pdf|course|notes|subject|everything|all|whole|entire)|"
+    # New additions for natural language unit/document queries:
+    r"what\s+is\s+(this|the)\s+(unit|doc|document|lecture|pdf|course|notes|subject)\s+about|"
+    r"explain\s+(this|the)\s+(unit|doc|document|lecture|pdf|course|notes|subject|everything|all|whole)"
     r")\b",
     re.IGNORECASE,
 )
