@@ -535,3 +535,15 @@ class MongoStore:
             )
 
         return "\n\n---\n\n".join(sections)
+    
+    def delete_last_interaction(self, chat_id: str):
+        """Deletes the most recent user message and any subsequent assistant messages."""
+        last_user_msg = self.messages.find_one(
+            {"chat_id": chat_id, "role": "user"},
+            sort=[("created_at", DESCENDING)]
+        )
+        if last_user_msg:
+            self.messages.delete_many({
+                "chat_id": chat_id,
+                "created_at": {"$gte": last_user_msg["created_at"]}
+            })
