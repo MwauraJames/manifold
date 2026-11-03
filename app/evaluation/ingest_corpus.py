@@ -18,7 +18,7 @@ load_dotenv()
 from datasets import load_dataset
 from llama_index.core import Document
 
-from config import settings
+from app.configs.config import settings
 from ingestion.storage import Storage
 from ingestion.embed import Embed
 from ingestion.reset_store import reset_all
