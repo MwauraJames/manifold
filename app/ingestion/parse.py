@@ -1,7 +1,7 @@
 from langsmith import traceable
 from pathlib import Path
 
-from config import Settings
+from configs.config import Settings
 
 settings = Settings()
 
