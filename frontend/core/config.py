@@ -22,7 +22,7 @@ def _int(name: str, default: int) -> int:
     return int(raw)
 
 
-API_URL = os.getenv("API_URL", "http://api:8000").rstrip("/")
+API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 25)
 ASK_TIMEOUT_S = _int("ASK_TIMEOUT_S", 120)
 UPLOAD_TIMEOUT_S = _int("UPLOAD_TIMEOUT_S", 120)

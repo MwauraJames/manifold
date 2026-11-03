@@ -37,7 +37,7 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
     version = st.session_state.get("uploader_version", 0)
     uploaded = st.file_uploader(
         "Upload PDFs",
-        type=["pdf", "doc", "docx", "pptx","md","txt"],
+        type=["pdf"],
         accept_multiple_files=True,
         key=f"uploader_{version}",
         help=(

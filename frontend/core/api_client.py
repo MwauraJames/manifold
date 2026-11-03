@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import mimetypes
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, TypeVar
 from urllib.parse import quote
@@ -318,17 +317,21 @@ def list_models() -> ModelList:
     payload = _json_or_error(response)
     options: list[ModelOption] = []
     for item in payload.get("models") or []:
-        model_id = item.get("id")
-        if not model_id:
+        if not isinstance(item, dict) or not item.get("id"):
             continue
+        # Keep only what the UI needs; any extra server-side fields are dropped here.
         options.append(
             ModelOption(
-                id=model_id,
-                name=item.get("name") or model_id,
+                id=item["id"],
+                name=item.get("name") or item["id"],
                 provider=item.get("provider") or "",
             )
         )
-    return ModelList(default_model=payload.get("default_model"), models=options)
+    # The backend calls the default "default" (older versions: "default_model").
+    default = payload.get("default") or payload.get("default_model")
+    if isinstance(default, dict):
+        default = default.get("id")
+    return ModelList(default_model=default if isinstance(default, str) else None, models=options)
 
 
 # ------------------------------------------------------------------ documents
@@ -343,10 +346,7 @@ def upload_files(files: list[tuple[str, bytes]], subject: str) -> UploadBatchRes
     if not files:
         raise ApiError("Choose at least one file.")
     # Repeating the field name "files" is how multipart sends a list.
-    multipart = [
-    ("files", (name, data, mimetypes.guess_type(name)[0] or "application/octet-stream"))
-    for name, data in files
-        ]
+    multipart = [("files", (name, data, "application/pdf")) for name, data in files]
     response = _request(
         "POST",
         "/upload",
@@ -553,8 +553,12 @@ def ask(
         timeout=(CONNECT_TIMEOUT, ASK_TIMEOUT_S),
     )
     body = _json_or_error(response)
+    answer = body.get("answer")
+    if isinstance(answer, dict):  # some backend versions return {"messages": [{"role", "content"}]}
+        last = (answer.get("messages") or [{}])[-1]
+        answer = last.get("content") if isinstance(last, dict) else ""
     return AskResult(
-        answer=body.get("answer") or "",
+        answer=answer or "",
         chat_id=body.get("chat_id") or chat_id,
         subject=body.get("subject") or subject,
         doc_id=body.get("doc_id") or doc_id,
@@ -577,42 +581,35 @@ def _parse_sse_event(raw: str) -> StreamEvent | None:
     return StreamEvent(kind=str(payload.get("type") or ""), data=payload)
 
 
-def ask_stream(
-    query: str,
-    subject: str,
-    doc_id: str | None = None,
-    chat_id: str | None = None,
-    model: str | None = None,
-) -> Iterator[StreamEvent]:
+def _stream_events(path: str, payload: dict[str, Any], token: str | None = None) -> Iterator[StreamEvent]:
     """
-    POST /ask with stream=true and yield the Server-Sent Events as they arrive.
+    POST `payload` to `path` and yield the Server-Sent Events as they arrive.
 
-    Events: meta (chat_id, doc_id, subject, model), token (content),
-    error (detail), done. Errors that happen before the stream starts
-    (bad model, wrong chat owner, expired session) are raised as ApiError.
+    Events: meta (chat_id, doc_id, subject, model), token (content), done
+    (chat_id). Errors before the stream starts (bad model, wrong chat owner,
+    expired session) are raised as ApiError.
+
+    Pass `token` when calling from a background thread: Streamlit's session
+    state is not available there, so the token is supplied explicitly and no
+    automatic refresh is attempted.
     """
-    if not subject:
-        raise ApiError("A subject is required.")
-    payload: dict[str, Any] = {"query": query, "subject": subject, "stream": True}
-    if doc_id:
-        payload["doc_id"] = doc_id
-    if chat_id:
-        payload["chat_id"] = chat_id
-    if model:
-        payload["model"] = model
+
+    def _headers() -> dict[str, str]:
+        base = {"Authorization": f"Bearer {token}"} if token else _auth_headers()
+        return {**base, "Accept": "text/event-stream"}
 
     def _open() -> requests.Response:
         return _session.post(
-            f"{API_URL}/ask",
+            f"{API_URL}{path}",
             json=payload,
-            headers={**_auth_headers(), "Accept": "text/event-stream"},
+            headers=_headers(),
             stream=True,
             timeout=(CONNECT_TIMEOUT, ASK_TIMEOUT_S),
         )
 
     try:
         response = _open()
-        if response.status_code == 401 and _try_refresh():
+        if token is None and response.status_code == 401 and _try_refresh():
             response.close()
             response = _open()
     except Exception as exc:
@@ -625,6 +622,8 @@ def ask_stream(
 
     response.encoding = "utf-8"
     buffer = ""
+    started = False   # have we received at least one event?
+    saw_done = False  # did the server finish the answer?
     try:
         # chunk_size=None yields data as each network chunk arrives. (iter_lines
         # would wait for 512 bytes, which delays short answers.)
@@ -637,15 +636,84 @@ def ask_stream(
                 raw, buffer = buffer.split("\n\n", 1)
                 event = _parse_sse_event(raw)
                 if event:
+                    started = True
+                    saw_done = saw_done or event.kind == "done"
                     yield event
         if buffer.strip():
             event = _parse_sse_event(buffer)
             if event:
+                started = True
+                saw_done = saw_done or event.kind == "done"
                 yield event
+        # The backend saves a turn only after the answer is complete, and it sends
+        # no "error" event, so a stream that stops without "done" was cut off.
+        if started and not saw_done:
+            raise ApiError("The connection closed before the answer finished.")
     except requests.RequestException as exc:
+        if started:
+            raise ApiError("The answer was interrupted before it finished.") from exc
         raise _map_request_error(exc) from exc
     finally:
         response.close()
+
+
+def ask_stream(
+    query: str,
+    subject: str,
+    doc_id: str | None = None,
+    chat_id: str | None = None,
+    model: str | None = None,
+    token: str | None = None,
+) -> Iterator[StreamEvent]:
+    """POST /ask with stream=true."""
+    if not subject:
+        raise ApiError("A subject is required.")
+    payload: dict[str, Any] = {"query": query, "subject": subject, "stream": True}
+    if doc_id:
+        payload["doc_id"] = doc_id
+    if chat_id:
+        payload["chat_id"] = chat_id
+    if model:
+        payload["model"] = model
+    return _stream_events("/ask", payload, token)
+
+
+def edit_last_stream(
+    chat_id: str,
+    query: str,
+    model: str | None = None,
+    token: str | None = None,
+) -> Iterator[StreamEvent]:
+    """
+    POST /chats/{chat_id}/edit_last: the backend deletes the chat's last
+    question and answer, then streams a new answer to the edited question.
+    The chat's subject and document scope are taken from the chat itself.
+    """
+    payload: dict[str, Any] = {"query": query, "stream": True}
+    if model:
+        payload["model"] = model
+    return _stream_events(f"/chats/{_q(chat_id)}/edit_last", payload, token)
+
+
+def stop_generation(chat_id: str) -> None:
+    """Ask the backend to stop the answer currently streaming for this chat."""
+    response = _request("POST", f"/chats/{_q(chat_id)}/stop")
+    _json_or_error(response)
+
+
+def ensure_session() -> str:
+    """
+    Cheap authenticated call that refreshes an expired access token (in the
+    main thread, where session state exists) before a background thread
+    starts using it. Raises ApiError(401) if the session can't be refreshed.
+    """
+    response = _request("GET", "/auth/me", retry_connection=True)
+    return _json_or_error(response).get("user_id") or ""
+
+
+def current_access_token() -> str | None:
+    user = _user()
+    return user.get("access_token") if user else None
 
 
 def ping() -> bool:

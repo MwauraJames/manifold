@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import Counter
 
 import streamlit as st
@@ -27,6 +28,7 @@ def _select_chat(chat: ChatSummary, subject: str) -> None:
     except ApiError as exc:
         st.session_state["flash"] = exc.message
         return
+    state.new_view()
     st.session_state["chat_id"] = chat.chat_id
     st.session_state["chat_doc_id"] = chat.doc_id
     st.session_state["chat_messages"] = messages
@@ -111,17 +113,22 @@ def delete_subject_dialog(subject_name: str) -> None:
 
 # --------------------------------------------------------------------- models
 
+MODELS_TTL_S = 300  # re-check the server's model list every 5 minutes
+
 
 def _load_models() -> ModelList:
-    """Fetch the server's model list once per browser session."""
+    """The server's model list, cached per browser session for a few minutes."""
     cached = st.session_state.get("_models")
-    if cached is not None:
+    age = time.time() - st.session_state.get("_models_at", 0)
+    if cached is not None and age < MODELS_TTL_S:
         return cached
     try:
         models = api_client.list_models()
     except ApiError:
-        models = ModelList()
+        # Keep showing the last good list if a refresh fails.
+        models = cached if cached is not None else ModelList()
     st.session_state["_models"] = models
+    st.session_state["_models_at"] = time.time()
     return models
 
 

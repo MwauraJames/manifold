@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import streamlit as st
 
 ALL_DOCS = "__all__"  # scope value meaning "every document in the subject"
@@ -17,6 +19,9 @@ def _defaults() -> dict:
         "chat_subject": None,   # subject the chat state belongs to
         "chat_messages": [],
         "uploader_version": 0,
+        "chat_view_id": uuid.uuid4().hex,  # changes whenever the chat screen is swapped for another chat
+        "editing_last": False,
+        "stream_job": None,                # background answer being generated (core/stream_job.py)
     }
 
 
@@ -26,8 +31,15 @@ def init_state() -> None:
             st.session_state[key] = value
 
 
+def new_view() -> None:
+    """Mark the chat screen as a different conversation (see StreamJob.view_id)."""
+    st.session_state["chat_view_id"] = uuid.uuid4().hex
+    st.session_state["editing_last"] = False
+
+
 def reset_chat() -> None:
     """Back to a blank 'new chat' screen."""
+    new_view()
     st.session_state["chat_id"] = None
     st.session_state["chat_doc_id"] = None
     st.session_state["chat_messages"] = []

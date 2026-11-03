@@ -100,8 +100,8 @@ def plan_upload(files: list[Any], existing_docs: list[Any], max_mb: int, max_fil
     for f in files:
         key = slug(f.name)
         reason = None
-        if not f.name.lower().endswith((".pdf", ".doc", ".docx", ".pptx",".md",".txt")):
-            reason = "unsupported file type"
+        if not f.name.lower().endswith(".pdf"):
+            reason = "not a PDF"
         elif f.size == 0:
             reason = "the file is empty"
         elif f.size > max_mb * 1024 * 1024:
