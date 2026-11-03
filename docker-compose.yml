@@ -1,6 +1,6 @@
 # Put this file in the PROJECT ROOT (Study_Assistant/), next to pyproject.toml,
 # not inside app/.
-name: study-assistant
+name: manifold
 
 services:
   qdrant:
