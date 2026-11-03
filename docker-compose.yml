@@ -37,6 +37,10 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+      network: host
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
     depends_on:
       qdrant:
@@ -73,6 +77,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      network: host
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
     depends_on:
       api:
@@ -82,7 +90,7 @@ services:
       API_URL: http://api:8000
       DB_PATH: /srv/frontend/data/app.db
     ports:
-      - "127.0.0.1:8501:8501"
+      - "8501:8501"
     volumes:
       - ./frontend/data:/srv/frontend/data      # keeps accounts and chats across rebuilds
     healthcheck:
