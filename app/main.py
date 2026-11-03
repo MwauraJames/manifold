@@ -65,6 +65,8 @@ class IngestionJob:
 
 ingestion_queue: asyncio.Queue[IngestionJob] = asyncio.Queue()
 
+active_streams: dict[str, bool] = {}
+
 
 async def ingestion_worker():
     """
@@ -323,7 +325,7 @@ def _attach_run_metadata(user_id: str, chat_id: str, body: Question, target_mode
 
 
 @traceable(
-    name="StudyAssistant",
+    name="Manifold",
     run_type="chain",
     process_inputs=_format_root_inputs,
 )
@@ -374,7 +376,7 @@ def response_pipeline(
 
 
 @traceable(
-    name="StudyAssistant",
+    name="Manifold",
     run_type="chain",
     process_inputs=_format_root_inputs,
     reduce_fn=_reduce_sse_stream_for_langsmith,
@@ -421,6 +423,8 @@ def stream_response_pipeline(
 
     full_answer_parts: list[str] = []
 
+    active_streams[chat_id] = False
+    
     if not context:
         fallback = "I couldn't find anything relevant to that in your documents."
         full_answer_parts.append(fallback)
@@ -434,9 +438,18 @@ def stream_response_pipeline(
             chat_history=recent_messages,
             summary=summary,
         ):
+            # Check for cancellation
+            if active_streams.get(chat_id):
+                stop_msg = "\n\n*[Generation stopped by user]*"
+                full_answer_parts.append(stop_msg)
+                yield f"data: {json.dumps({'type': 'token', 'content': stop_msg})}\n\n"
+                break
+                
             full_answer_parts.append(token)
             chunk_payload = json.dumps({"type": "token", "content": token})
             yield f"data: {chunk_payload}\n\n"
+    # Cleanup the flag
+    active_streams.pop(chat_id, None)
 
     full_answer = "".join(full_answer_parts)
     mongo.add_message(chat_id, user_id, "user", body.query)
@@ -806,3 +819,55 @@ def delete_chat(
         raise HTTPException(404, f"Chat '{chat_id}' not found.")
     mongo.delete_chat(chat_id)
     return {"status": "deleted", "chat_id": chat_id}
+
+# Add the endpoint
+@app.post("/chats/{chat_id}/stop")
+def stop_generation(chat_id: str, user_id: str = Depends(get_current_user)):
+    chat = mongo.get_chat_session(chat_id)
+    if not chat or chat.get("user_id") != user_id:
+        raise HTTPException(403, "Not authorized.")
+    
+    active_streams[chat_id] = True
+    return {"status": "stopping"}
+
+@app.post("/chats/{chat_id}/edit_last")
+def edit_last_prompt(
+    chat_id: str,
+    body: Question,
+    user_id: str = Depends(get_current_user),
+):
+    existing_chat = mongo.get_chat_session(chat_id)
+    if not existing_chat or existing_chat.get("user_id") != user_id:
+        raise HTTPException(403, "Not authorized to access this chat.")
+    
+    # Inject chat metadata into the body
+    body.doc_id = existing_chat.get("doc_id")
+    body.subject = existing_chat.get("subject")
+    
+    try:
+        resolved_cfg = resolve_model_config(body.model)
+        selected_model = resolved_cfg["model"]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Purge the last user prompt and the AI's response from MongoDB
+    mongo.delete_last_interaction(chat_id)
+
+    if body.stream:
+        return StreamingResponse(
+            stream_response_pipeline(
+                body=body,
+                user_id=user_id,
+                chat_id=chat_id,
+                model_name=selected_model,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    
+    answer = response_pipeline(body, user_id, chat_id, selected_model)
+    return {"chat_id": chat_id, "answer": answer}
