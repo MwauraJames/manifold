@@ -1,164 +1,148 @@
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime, timezone
-
 import streamlit as st
 
-from core import api_client, db
-from core.api_client import ApiError
-from core.config import MAX_UPLOAD_MB, POLL_SECONDS
-from core.db import new_id
-from core.text_utils import format_size, safe_filename
+from core import api_client
+from core.api_client import ApiError, DocumentRecord
+from core.config import (
+    MAX_FILES_PER_BATCH,
+    MAX_UPLOAD_MB,
+    POLL_SECONDS,
+    STALE_PROCESSING_MIN,
+    STALE_QUEUED_MIN,
+)
+from core.utils import ACTIVE_STATUSES, format_date, minutes_since, plan_upload
 
-ACCEPTED = ["pdf", "docx", "pptx", "txt", "md","doc"]
-LONG_PROCESSING_MINUTES = 15
-UNKNOWN_TOOLTIP = "The server no longer knows this document. It may need to be uploaded again."
+STATUS_LABEL = {
+    "queued": ":gray[Queued]",
+    "processing": ":orange[Processing…]",
+    "ready": ":green[Ready]",
+    "failed": ":red[Failed]",
+}
 
 
-def render_documents(user: dict, subject: dict) -> None:
-    st.subheader("Documents")
-    st.caption("Upload files for this subject. Processing can take a few seconds to a few minutes.")
+def render_documents(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
+    st.subheader("Upload")
+    _render_upload(subject_name, subject_docs)
 
-    files = st.file_uploader(
-        "Choose files",
-        type=ACCEPTED,
+    st.subheader("Your documents")
+    active = any(d.status in ACTIVE_STATUSES for d in subject_docs)
+    # Only poll while something is queued or processing. The fragment re-fetches
+    # the list every few seconds without rerunning the whole app.
+    runner = st.fragment(run_every=POLL_SECONDS if active else None)(_documents_fragment)
+    runner(subject_name, active)
+
+
+def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
+    version = st.session_state.get("uploader_version", 0)
+    uploaded = st.file_uploader(
+        "Upload PDFs",
+        type=["pdf", "doc", "docx", "pptx","md","txt"],
         accept_multiple_files=True,
-        key=f"uploader_{subject['id']}",
+        key=f"uploader_{version}",
+        help=(
+            f"PDF only. Up to {MAX_FILES_PER_BATCH} files at a time, "
+            f"{MAX_UPLOAD_MB} MB each. They are processed one after another."
+        ),
     )
-    upload_anyway = st.checkbox(
-        "Upload anyway if this file was already added",
-        key=f"anyway_{subject['id']}",
-    )
-    if st.button("Process", type="primary"):
-        _process_files(user, subject, files or [], upload_anyway)
+    if not uploaded:
+        return
 
-    docs = db.list_documents(user["id"], subject["id"])
-    processing = [d for d in docs if d["status"] == "processing"]
-    if processing:
-        _poll_statuses(user["id"], subject["id"])
-        docs = db.list_documents(user["id"], subject["id"])
+    plan = plan_upload(uploaded, existing_docs, MAX_UPLOAD_MB, MAX_FILES_PER_BATCH)
+    if plan.error:
+        st.error(plan.error)
+        return
+
+    if plan.skipped:
+        lines = "\n".join(f"- **{name}**: {reason}" for name, reason in plan.skipped)
+        st.warning(f"These files will be skipped:\n\n{lines}")
+
+    if not plan.accepted:
+        return
+
+    confirmed = True
+    if plan.replacing:
+        names = ", ".join(f"**{n}**" for n in plan.replacing)
+        st.warning(
+            "A document with the same name already exists in this subject for: "
+            f"{names}. Uploading will replace {'it' if len(plan.replacing) == 1 else 'them'}."
+        )
+        confirmed = st.checkbox("Replace the existing documents", key=f"replace_{version}")
+
+    count = len(plan.accepted)
+    label = "Upload 1 file" if count == 1 else f"Upload {count} files"
+    if st.button(label, type="primary", disabled=not confirmed):
+        payload = [(f.name, f.getvalue()) for f in plan.accepted]
+        with st.spinner(f"Uploading {count} file{'s' if count != 1 else ''}…"):
+            try:
+                result = api_client.upload_files(payload, subject)
+            except ApiError as exc:
+                st.error(exc.message)
+                if exc.status_code and exc.status_code >= 500:
+                    # The server handles files one by one, so some may already be queued.
+                    st.caption("Some files may already have been queued. Check the list below.")
+                return
+        queued = len(result.documents) or count
+        st.session_state["uploader_version"] = version + 1  # clears the uploader
+        st.session_state["flash"] = (
+            f"{queued} file{'s' if queued != 1 else ''} queued. They'll be processed one at a time."
+        )
+        st.rerun()
+
+
+def _documents_fragment(subject: str, was_active: bool) -> None:
+    try:
+        docs = api_client.list_documents(subject)
+    except ApiError as exc:
+        st.error(exc.message)
+        return
+
+    queued_n = sum(1 for d in docs if d.status == "queued")
+    processing_n = sum(1 for d in docs if d.status == "processing")
+    if was_active and not (queued_n or processing_n):
+        # Everything finished: rerun the whole app so the Chat view and the
+        # sidebar counts see the new "ready" documents.
+        st.rerun(scope="app")
 
     if not docs:
-        st.info("No documents in this subject yet.")
+        st.caption("No documents in this subject yet.")
         return
 
-    rows = []
-    for doc in docs:
-        status = _status_label(doc)
-        error = doc.get("error") or ""
-        if doc["status"] == "unknown" and not error:
-            error = UNKNOWN_TOOLTIP
-        rows.append(
-            {
-                "Filename": doc["filename"],
-                "Size": format_size(doc.get("size_bytes")),
-                "Status": status,
-                "Uploaded": _short_time(doc.get("created_at")),
-                "Error": error,
-            }
-        )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    if queued_n or processing_n:
+        parts = []
+        if processing_n:
+            parts.append(f"{processing_n} processing")
+        if queued_n:
+            parts.append(f"{queued_n} waiting in the queue")
+        st.info(" · ".join(parts).capitalize() + ". This list updates by itself.")
 
-
-def _status_label(doc: dict) -> str:
-    status = doc["status"]
-    if status == "processing" and _is_overdue(doc.get("created_at")):
-        return "processing (taking unusually long)"
-    return status
-
-
-def _is_overdue(created_at: str | None) -> bool:
-    if not created_at:
-        return False
-    try:
-        started = datetime.fromisoformat(created_at)
-    except ValueError:
-        return False
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - started
-    return age.total_seconds() > LONG_PROCESSING_MINUTES * 60
-
-
-def _short_time(value: str | None) -> str:
-    if not value:
-        return ""
-    return value.replace("T", " ")[:19]
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _process_files(user: dict, subject: dict, files: list, upload_anyway: bool) -> None:
-    if not files:
-        st.warning("Choose at least one file first.")
-        return
-    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
-    for uploaded in files:
-        filename = safe_filename(uploaded.name)
-        data = uploaded.getvalue()
-        if len(data) > max_bytes:
-            st.error(f"{filename} is larger than {MAX_UPLOAD_MB} MB.")
-            continue
-        digest = _sha256(data)
-        existing = db.find_document_by_hash(user["id"], subject["id"], digest)
-        if existing and not upload_anyway:
-            st.warning(f"{filename} is already in this subject. Tick “Upload anyway” to send it again.")
-            continue
-        doc_id = new_id()
-        db.insert_document(
-            doc_id=doc_id,
-            user_id=user["id"],
-            subject_id=subject["id"],
-            filename=filename,
-            size_bytes=len(data),
-            sha256=digest,
-            status="uploading",
-        )
-        try:
-            api_client.upload(
-                file_bytes=data,
-                filename=filename,
-                user_id=user["id"],
-                subject=subject["slug"],
-                doc_id=doc_id,
-            )
-            db.update_document_status(user["id"], doc_id, "processing")
-        except ApiError as exc:
-            db.update_document_status(user["id"], doc_id, "failed", error=exc.message)
-            st.error(f"{filename}: {exc.message}")
-    st.rerun()
-
-
-@st.fragment(run_every=f"{POLL_SECONDS}s")
-def _poll_statuses(user_id: str, subject_id: str) -> None:
-    processing = db.list_processing_documents(user_id, subject_id)
-    if not processing:
-        return
-    changed = False
-    for doc in processing:
-        try:
-            result = api_client.get_status(doc["id"])
-            if result.status != doc["status"] or result.error != doc.get("error"):
-                db.update_document_status(
-                    user_id,
-                    doc["id"],
-                    result.status,
-                    error=result.error,
+    for index, doc in enumerate(docs):
+        info_col, status_col, menu_col = st.columns([6, 2, 1])
+        with info_col:
+            st.markdown(f"**{doc.filename}**")
+            uploaded_at = format_date(doc.created_at)
+            if uploaded_at:
+                st.caption(f"Uploaded {uploaded_at}")
+        with status_col:
+            st.markdown(STATUS_LABEL.get(doc.status, doc.status))
+            if doc.status == "failed" and doc.error:
+                st.caption(doc.error[:160])
+            age = minutes_since(doc.updated_at)
+            if doc.status == "processing" and age is not None and age > STALE_PROCESSING_MIN:
+                st.caption("Taking longer than expected. You can delete it and try again.")
+            if doc.status == "queued" and age is not None and age > STALE_QUEUED_MIN:
+                st.caption(
+                    "Still waiting. If the server was restarted, the queue was lost: "
+                    "delete this and upload it again."
                 )
-                changed = True
-        except ApiError as exc:
-            if exc.status_code == 404:
-                db.update_document_status(
-                    user_id,
-                    doc["id"],
-                    "unknown",
-                    error=UNKNOWN_TOOLTIP,
-                )
-                changed = True
-            else:
-                st.warning(exc.message)
-    if changed:
-        st.rerun()
+        with menu_col:
+            with st.popover("Delete"):
+                st.write("Delete this document?")
+                if st.button("Confirm delete", key=f"del_doc_{index}_{doc.doc_id}", type="primary"):
+                    try:
+                        api_client.delete_document(doc.doc_id)
+                    except ApiError as exc:
+                        if exc.status_code != 404:
+                            st.error(exc.message)
+                            continue
+                    st.rerun(scope="app")

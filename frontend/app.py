@@ -2,36 +2,48 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core import db
+from core import api_client
+from core.api_client import ApiError
+from core.config import ENABLE_DELETE
+from ui import state
 from ui.auth_ui import render_auth
 from ui.chat_ui import render_chat
 from ui.documents_ui import render_documents
-from ui.sidebar import prompt_rename, render_sidebar, rename_subject_dialog
+from ui.sidebar import delete_subject_dialog, prompt_delete_subject, render_sidebar
 
-st.set_page_config(page_title="Study Assistant", layout="wide")
-db.init_db()
-
-if "user" not in st.session_state:
-    st.session_state["user"] = None
-if "subject_id" not in st.session_state:
-    st.session_state["subject_id"] = None
-if "show_new_subject" not in st.session_state:
-    st.session_state["show_new_subject"] = False
-if "show_rename" not in st.session_state:
-    st.session_state["show_rename"] = False
+# Theme: set in .streamlit/config.toml (dark by default). Users can switch to
+# light from Streamlit's own menu (top right -> Settings), so no custom CSS here.
+st.set_page_config(page_title="Study Assistant", page_icon="📚", layout="wide")
+state.init_state()
 
 user = st.session_state.get("user")
 if not user:
     render_auth()
     st.stop()
 
-render_sidebar(user)
+try:
+    subjects = api_client.list_subjects()
+    documents = api_client.list_documents()
+except ApiError as exc:
+    if exc.status_code == 401:
+        # Token expired and the refresh failed: back to the login screen.
+        state.reset_all()
+        st.session_state["auth_notice"] = "Your session expired. Please log in again."
+        st.rerun()
+    render_sidebar(user, [], [])
+    st.error(exc.message)
+    st.stop()
 
-subjects = db.list_subjects(user["id"])
-subject_id = st.session_state.get("subject_id")
-subject = db.get_subject(user["id"], subject_id) if subject_id else None
+# Make sure the selected subject still exists (it may have been deleted).
+names = [s.name for s in subjects]
+subject_name = st.session_state.get("subject")
+if subject_name not in names:
+    subject_name = names[0] if names else None
+    st.session_state["subject"] = subject_name
 
-if not subjects or subject is None:
+render_sidebar(user, subjects, documents)
+
+if not subject_name:
     st.title("Study Assistant")
     st.info("Create a subject to upload notes and start chatting. Each subject stays private to you.")
     if st.button("New subject", key="empty_new_subject"):
@@ -39,19 +51,28 @@ if not subjects or subject is None:
         st.rerun()
     st.stop()
 
+subject_docs = [d for d in documents if d.subject == subject_name]
+
 header_left, header_right = st.columns([4, 1])
 with header_left:
-    st.title(subject["name"])
-    st.caption(f"Slug: `{subject['slug']}`")
+    st.title(subject_name)
 with header_right:
-    if st.button("Rename"):
-        prompt_rename()
+    if ENABLE_DELETE and st.button("Delete subject"):
+        prompt_delete_subject()
 
-if st.session_state.get("show_rename"):
-    rename_subject_dialog(user["id"], subject)
+if st.session_state.get("show_delete_subject"):
+    delete_subject_dialog(subject_name)
 
-chat_tab, docs_tab = st.tabs(["Chat", "Documents"])
-with chat_tab:
-    render_chat(user, subject)
-with docs_tab:
-    render_documents(user, subject)
+# A radio instead of st.tabs: st.chat_input only pins to the bottom of the page
+# when it is NOT inside a tab or container.
+view = st.radio(
+    "View",
+    ["Chat", "Documents"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="view",
+)
+if view == "Chat":
+    render_chat(subject_name, subject_docs)
+else:
+    render_documents(subject_name, subject_docs)

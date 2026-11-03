@@ -2,166 +2,121 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core import api_client, db
-from core.api_client import ApiError, ChatSummary
-from core.text_utils import clean_answer
-
-MAX_QUESTION_LEN = 2000
-NEW_CHAT = "__new__"
-
-
-def _active_key(subject_id: str) -> str:
-    return f"active_chat_{subject_id}"
+from core import api_client
+from core.api_client import ApiError, DocumentRecord
+from core.utils import ACTIVE_STATUSES
+from ui import state
+from ui.state import ALL_DOCS
 
 
-def _select_key(subject_id: str) -> str:
-    return f"chat_select_{subject_id}"
+def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
+    # A different subject means a different conversation.
+    if st.session_state.get("chat_subject") != subject_name:
+        state.reset_chat()
+        st.session_state["chat_subject"] = subject_name
 
+    ready_docs = [d for d in subject_docs if d.status == "ready"]
+    processing = any(d.status in ACTIVE_STATUSES for d in subject_docs)
+    doc_names = {d.doc_id: d.filename for d in subject_docs}
+    chat_id = st.session_state.get("chat_id")
 
-def _pending_key(subject_id: str) -> str:
-    return f"pending_chat_{subject_id}"
+    # ---- scope: which documents the question is about
+    if chat_id:
+        # The backend stores a chat's scope when it's created, so it's read-only now.
+        scope_doc = st.session_state.get("chat_doc_id")
+        label = doc_names.get(scope_doc, scope_doc) if scope_doc else "All documents in this subject"
+        st.caption(f"Scope: {label}")
+        if scope_doc and scope_doc not in doc_names:
+            st.warning("The document this chat was about has been deleted.")
+        doc_id = scope_doc
+    else:
+        options = [ALL_DOCS] + [d.doc_id for d in ready_docs]
+        if st.session_state.get("scope_doc") not in options:
+            st.session_state["scope_doc"] = ALL_DOCS
+        choice = st.selectbox(
+            "Ask about",
+            options,
+            format_func=lambda v: "All documents in this subject" if v == ALL_DOCS else doc_names.get(v, v),
+            key="scope_doc",
+        )
+        doc_id = None if choice == ALL_DOCS else choice
 
+    # ---- history
+    messages = st.session_state["chat_messages"]
+    if not messages:
+        st.markdown("#### What would you like to know?")
+        st.caption("Ask a question about your notes, ask for a summary, or ask to be quizzed.")
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-def _get_active_chat_id(subject_id: str) -> str | None:
-    value = st.session_state.get(_active_key(subject_id))
-    if not value or value == NEW_CHAT:
-        return None
-    return str(value)
-
-
-def _set_active_chat_id(subject_id: str, chat_id: str | None) -> None:
-    value = chat_id or NEW_CHAT
-    st.session_state[_active_key(subject_id)] = None if value == NEW_CHAT else value
-    st.session_state[_pending_key(subject_id)] = value
-
-
-def render_chat(user: dict, subject: dict) -> None:
-    st.subheader(f"Chatting with: {subject['name']}")
-    st.caption(
-        "Answers use only the documents in this subject. "
-        "Follow-up questions stay in this conversation so the assistant remembers earlier turns."
-    )
-
-    ready = db.list_ready_documents(user["id"], subject["id"])
-    processing = db.list_processing_documents(user["id"], subject["id"])
-
-    chats, chats_error = _load_chats(user["id"], subject["slug"])
-    if chats_error:
-        st.warning(chats_error)
-
-    _render_conversation_controls(subject, chats)
-
-    doc_id = None
-    with st.expander("Scope"):
-        labels = ["All documents in this subject"] + [d["filename"] for d in ready]
-        choice = st.selectbox("Answer using", labels, index=0)
-        if choice != "All documents in this subject":
-            match = next(d for d in ready if d["filename"] == choice)
-            doc_id = match["id"]
-
-    chat_id = _get_active_chat_id(subject["id"])
-    messages, messages_error = _load_messages(chat_id)
-    if messages_error:
-        st.error(messages_error)
-
-    for msg in messages:
-        with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant":
-                st.markdown(clean_answer(msg["content"]))
-            else:
-                st.markdown(msg["content"])
-
-    disabled = not ready
-    if disabled:
+    # ---- input
+    if not ready_docs:
         if processing:
-            st.info("Chat is disabled until at least one document is ready. Some files are still processing.")
+            st.info("Your documents are still queued or being processed. You can ask questions once one is ready.")
         else:
-            st.info("Chat is disabled until this subject has a ready document.")
+            st.info("Upload a PDF in the Documents view to start asking questions.")
+    prompt = st.chat_input("Ask a question about your notes…", disabled=not ready_docs)
+    if prompt:
+        _answer(prompt, subject_name, doc_id)
 
-    prompt = st.chat_input(
-        "Ask a question about these documents",
-        disabled=disabled,
-        max_chars=MAX_QUESTION_LEN,
-    )
-    if not prompt:
-        return
-    if len(prompt) > MAX_QUESTION_LEN:
-        st.error(f"Questions can be at most {MAX_QUESTION_LEN} characters.")
-        return
 
+def _answer(prompt: str, subject: str, doc_id: str | None) -> None:
+    messages = st.session_state["chat_messages"]
+    messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    meta: dict = {}
+    errors: list[str] = []
+    collected: list[str] = []
+
     with st.chat_message("assistant"):
+        status = st.empty()
+        status.markdown("_Searching your documents…_")
+
+        def tokens():
+            first = True
+            for event in api_client.ask_stream(
+                prompt,
+                subject,
+                doc_id=doc_id,
+                chat_id=st.session_state.get("chat_id"),
+                model=st.session_state.get("model_id"),
+            ):
+                if event.kind == "meta":
+                    meta.update(event.data)
+                elif event.kind == "token":
+                    if first:
+                        status.empty()
+                        first = False
+                    content = event.data.get("content") or ""
+                    collected.append(content)
+                    yield content
+                elif event.kind == "error":
+                    errors.append(event.data.get("detail") or "Generation failed.")
+
+        failure: ApiError | None = None
         try:
-            with st.spinner("Searching your documents..."):
-                result = api_client.ask(
-                    query=prompt,
-                    user_id=user["id"],
-                    subject=subject["slug"],
-                    doc_id=doc_id,
-                    chat_id=chat_id,
-                )
-            if result.chat_id:
-                _set_active_chat_id(subject["id"], result.chat_id)
-            st.markdown(clean_answer(result.answer))
-            if result.sources:
-                with st.expander("Sources"):
-                    for source in result.sources:
-                        st.markdown(str(source))
-            st.rerun()
+            st.write_stream(tokens())
         except ApiError as exc:
-            st.error(exc.message)
+            failure = exc
+        status.empty()
 
+        answer = "".join(collected)
+        if failure and not meta:
+            # The request never started, so the backend saved nothing.
+            messages.pop()
+            st.error(failure.message)
+            return
+        if failure or errors:
+            st.warning("The answer was interrupted. You can ask again.")
 
-def _render_conversation_controls(subject: dict, chats: list[ChatSummary]) -> None:
-    subject_id = subject["id"]
-    active = _get_active_chat_id(subject_id)
-    if active and not any(chat.chat_id == active for chat in chats):
-        chats = [ChatSummary(chat_id=active, title="Current conversation"), *chats]
-    options = [NEW_CHAT] + [chat.chat_id for chat in chats]
-    labels = {NEW_CHAT: "New conversation"}
-    for chat in chats:
-        title = (chat.title or "Untitled").strip() or "Untitled"
-        labels[chat.chat_id] = title
-
-    select_key = _select_key(subject_id)
-    pending_key = _pending_key(subject_id)
-    if pending_key in st.session_state:
-        pending = st.session_state.pop(pending_key)
-        st.session_state[select_key] = pending if pending in options else NEW_CHAT
-    elif select_key not in st.session_state:
-        st.session_state[select_key] = active if active in options else NEW_CHAT
-    elif st.session_state[select_key] not in options:
-        st.session_state[select_key] = active if active in options else NEW_CHAT
-
-    col_select, col_new = st.columns([4, 1])
-    with col_select:
-        chosen = st.selectbox(
-            "Conversation",
-            options,
-            format_func=lambda value: labels.get(value, value),
-            key=select_key,
-        )
-    with col_new:
-        if st.button("New chat", width="stretch"):
-            _set_active_chat_id(subject_id, None)
-            st.rerun()
-
-    st.session_state[_active_key(subject_id)] = None if chosen == NEW_CHAT else chosen
-
-
-def _load_chats(user_id: str, subject_slug: str) -> tuple[list[ChatSummary], str | None]:
-    try:
-        return api_client.list_chats(user_id, subject_slug), None
-    except ApiError as exc:
-        return [], exc.message
-
-
-def _load_messages(chat_id: str | None) -> tuple[list[dict], str | None]:
-    if not chat_id:
-        return [], None
-    try:
-        return api_client.get_chat_messages(chat_id), None
-    except ApiError as exc:
-        return [], exc.message
+    if answer.strip():
+        messages.append({"role": "assistant", "content": answer})
+    if meta.get("chat_id") and not st.session_state.get("chat_id"):
+        st.session_state["chat_id"] = meta["chat_id"]
+        st.session_state["chat_doc_id"] = meta.get("doc_id") or doc_id
+        st.session_state["chat_subject"] = subject
+    # Rerun so the sidebar shows the new chat title.
+    st.rerun()

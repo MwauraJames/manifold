@@ -1,24 +1,11 @@
 [project]
-name = "study-assistant-frontend"
+name = "frontend"
 version = "0.1.0"
-description = "Streamlit frontend for Study Assistant"
+description = "Add your description here"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.40",
-    "requests",
-    "bcrypt",
-    "python-dotenv",
-    "pymongo>=4.19.0",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "streamlit>=1.66.1",
 ]
-
-[dependency-groups]
-dev = [
-    "pytest",
-    "fastapi",
-    "uvicorn",
-    "python-multipart",
-]
-
-[tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]

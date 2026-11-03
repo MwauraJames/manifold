@@ -2,44 +2,59 @@ from __future__ import annotations
 
 import streamlit as st
 
-from core.auth import AuthError, login, signup
+from core import auth
+from core.auth import AuthError, ConfirmationRequired
+from ui import state
+
+
+def _finish(user: dict) -> None:
+    state.init_state()
+    st.session_state["user"] = user
+    state.reset_chat()
+    st.session_state["subject"] = None
+    st.rerun()
 
 
 def render_auth() -> None:
-    left, card, right = st.columns([1, 2, 1])
-    with card:
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
         st.title("Study Assistant")
-        st.caption("Sign in to your private study folders.")
+        st.caption("Upload your notes, organise them by subject, and ask questions about them.")
+
+        notice = st.session_state.pop("auth_notice", None)
+        if notice:
+            st.info(notice)
+
         login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
+
         with login_tab:
-            _login_form()
+            with st.form("login_form"):
+                email = st.text_input("Email", key="login_email")
+                password = st.text_input("Password", type="password", key="login_password")
+                submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+            if submitted:
+                try:
+                    user = auth.login(email, password)
+                except AuthError as exc:
+                    st.error(exc.message)
+                else:
+                    _finish(user)
+
         with signup_tab:
-            _signup_form()
-
-
-def _login_form() -> None:
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log in", use_container_width=True)
-    if submitted:
-        try:
-            st.session_state["user"] = login(username, password)
-            st.rerun()
-        except AuthError as exc:
-            st.error(exc.message)
-
-
-def _signup_form() -> None:
-    with st.form("signup_form"):
-        username = st.text_input("Username", help="3–32 characters: letters, digits, underscore.")
-        display_name = st.text_input("Display name (optional)")
-        password = st.text_input("Password", type="password")
-        confirm = st.text_input("Confirm password", type="password")
-        submitted = st.form_submit_button("Create account", use_container_width=True)
-    if submitted:
-        try:
-            st.session_state["user"] = signup(username, password, confirm, display_name)
-            st.rerun()
-        except AuthError as exc:
-            st.error(exc.message)
+            with st.form("signup_form"):
+                email = st.text_input("Email", key="signup_email")
+                password = st.text_input(
+                    "Password", type="password", key="signup_password",
+                    help=f"At least {auth.MIN_PASSWORD_LEN} characters.",
+                )
+                confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
+                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+            if submitted:
+                try:
+                    user = auth.signup(email, password, confirm)
+                except ConfirmationRequired as exc:
+                    st.warning(exc.message)
+                except AuthError as exc:
+                    st.error(exc.message)
+                else:
+                    _finish(user)
