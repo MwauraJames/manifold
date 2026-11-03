@@ -24,14 +24,14 @@ load_dotenv()
 
 from datasets import load_dataset
 
-from config import settings
+from app.configs.config import settings
 from ingestion.storage import Storage
 from ingestion.embed import Embed
 from retrieval import hybrid_search
 from retrieval.hybrid_search import build_hybrid_retriever, drop_covered_nodes
 from retrieval.expand import expand_query
 from retrieval.reranker import rerank_documents
-from models import model
+from app.generation.models import model
 from generation.response import final_response
 from evaluation import eval_prompts as P
 

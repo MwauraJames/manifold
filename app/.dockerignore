@@ -1,0 +1,19 @@
+# Lives in app/ (the build context). Paths are relative to app/.
+# .venv MUST be here: otherwise your host virtualenv overwrites the one built in the image.
+.venv
+**/__pycache__
+**/*.pyc
+.env
+**/.env
+
+# Data and caches: mounted as volumes, never baked into the image
+qdrant_storage
+uploads
+parsed_content
+chunked_content
+models
+chroma_db_storage
+bm25_index_storage
+evaluation
+observability
+ingestion/docling_parse.py
