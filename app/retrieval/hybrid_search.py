@@ -8,12 +8,13 @@ from llama_index.core.vector_stores import (
     FilterOperator,
 )
 
-from config import Settings
+from configs.config import Settings
 
 settings = Settings()
 TOP_K = settings.top_k
 MERGE_RATIO = getattr(settings, "merge_ratio", 0.5)
 MIN_MERGE_LEAVES = getattr(settings, "min_merge_leaves", 2)
+LEAF_SCORE_THRESHOLD =settings.leaf_score_threshold
 
 
 def build_metadata_filters(
@@ -64,54 +65,56 @@ def build_hybrid_retriever(
     )
 
 
+# In configs/config.py:
+# leaf_score_threshold: float = 0.45
+
 @traceable(run_type="retriever")
 def merge_leaves_to_parents(results) -> list[str]:
     """
-    Stateless Auto-Merging via Qdrant Payload:
-      - Counts how many retrieved leaves share each `parent_id`.
-      - If a parent has >= MIN_MERGE_LEAVES retrieved (or exceeds MERGE_RATIO of its
-        total children), all of those leaves are replaced by a single `parent_text`
-        at the rank position of the highest-scoring leaf, and the rest are dropped.
-      - Otherwise, the individual 128-token leaf text is kept as-is.
+    1. Filters out low-scoring leaves below LEAF_SCORE_THRESHOLD (0.0 - 1.0 scale).
+    2. Counts how many surviving leaves share each `parent_id`.
+    3. If a parent has >= MIN_MERGE_LEAVES surviving leaves, merges them into
+       a single 512-token `parent_text` for the reranker.
     """
-    # 1. Count occurrences of each parent_id in the retrieved top-k leaves
-    parent_counts = Counter()
-    parent_total_children = {}
+    if not results:
+        return []
 
-    for r in results:
+    # 1. Filter leaves by score threshold (default 0.45 on 0-1 scale)
+    qualified_leaves = [
+        r for r in results
+        if (r.score is None or r.score >= LEAF_SCORE_THRESHOLD)
+    ]
+
+    if not qualified_leaves:
+        return []
+
+    # 2. Count occurrences of each parent_id among the qualified leaves
+    parent_counts = Counter()
+    for r in qualified_leaves:
         meta = r.node.metadata or {}
         pid = meta.get("parent_id", r.node.node_id)
         parent_counts[pid] += 1
-        # Default to 4 children (512 / 128) if older points don't have num_siblings yet
-        parent_total_children[pid] = meta.get("num_siblings", 4)
 
-    # 2. Decide which parents qualify for merging
-    parents_to_merge = set()
-    for pid, count in parent_counts.items():
-        total_children = max(1, parent_total_children[pid])
-        ratio = count / total_children
+    # 3. Decide which parents qualify for merging
+    parents_to_merge = {
+        pid for pid, count in parent_counts.items()
+        if count >= MIN_MERGE_LEAVES
+    }
 
-        # Only merge if multiple leaves hit AND they exceed the ratio threshold
-        if count >= MIN_MERGE_LEAVES :
-            parents_to_merge.add(pid)
-
-    # 3. Build the final candidate list for the reranker (preserving RRF rank order)
+    # 4. Build the final candidate list for the reranker (preserving rank order)
     merged_parent_ids = set()
     candidate_texts = []
 
-    for r in results:
+    for r in qualified_leaves:
         meta = r.node.metadata or {}
         pid = meta.get("parent_id", r.node.node_id)
 
         if pid in parents_to_merge:
-            # First time seeing a leaf from this qualified parent -> insert parent_text
             if pid not in merged_parent_ids:
                 merged_parent_ids.add(pid)
                 parent_text = meta.get("parent_text") or r.node.get_content()
                 candidate_texts.append(parent_text)
-            # Subsequent sibling leaves from this parent are automatically dropped!
         else:
-            # Did not meet merge threshold -> keep the 128-token leaf text
             candidate_texts.append(r.node.get_content())
 
     return candidate_texts
