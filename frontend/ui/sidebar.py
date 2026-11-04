@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import time
 from collections import Counter
 
 import streamlit as st
 
 from core import api_client
-from core.api_client import ApiError, ChatSummary, DocumentRecord, ModelList, SubjectRecord
+from core.api_client import ApiError, ChatSummary, DocumentRecord, SubjectRecord
 from core.utils import validate_subject_name
 from ui import state
 
@@ -18,7 +17,7 @@ from ui import state
 def _select_subject(name: str) -> None:
     st.session_state["subject"] = name
     st.session_state["chat_subject"] = name
-    st.session_state["view"] = "Chat"
+    st.session_state["docs_panel"] = None  # let the panel decide again for this subject
     state.reset_chat()
 
 
@@ -33,7 +32,6 @@ def _select_chat(chat: ChatSummary, subject: str) -> None:
     st.session_state["chat_doc_id"] = chat.doc_id
     st.session_state["chat_messages"] = messages
     st.session_state["chat_subject"] = subject
-    st.session_state["view"] = "Chat"
 
 
 def _delete_chat(chat_id: str) -> None:
@@ -50,6 +48,10 @@ def _delete_chat(chat_id: str) -> None:
 
 def _logout() -> None:
     state.reset_all()
+
+
+def _open_new_subject() -> None:
+    st.session_state["show_new_subject"] = True
 
 
 def prompt_delete_subject() -> None:
@@ -77,7 +79,7 @@ def new_subject_dialog(existing_names: list[str]) -> None:
             return
         st.session_state["subject"] = record.name
         st.session_state["chat_subject"] = record.name
-        st.session_state["view"] = "Documents"  # next step is uploading notes
+        st.session_state["docs_panel"] = True  # the next step is uploading notes
         state.reset_chat()
         st.rerun()
 
@@ -111,39 +113,6 @@ def delete_subject_dialog(subject_name: str) -> None:
         st.rerun()
 
 
-# --------------------------------------------------------------------- models
-
-MODELS_TTL_S = 300  # re-check the server's model list every 5 minutes
-
-
-def _load_models() -> ModelList:
-    """The server's model list, cached per browser session for a few minutes."""
-    cached = st.session_state.get("_models")
-    age = time.time() - st.session_state.get("_models_at", 0)
-    if cached is not None and age < MODELS_TTL_S:
-        return cached
-    try:
-        models = api_client.list_models()
-    except ApiError:
-        # Keep showing the last good list if a refresh fails.
-        models = cached if cached is not None else ModelList()
-    st.session_state["_models"] = models
-    st.session_state["_models_at"] = time.time()
-    return models
-
-
-def _render_model_picker() -> None:
-    models = _load_models()
-    if not models.models:
-        st.session_state["model_id"] = None
-        return
-    ids = [m.id for m in models.models]
-    labels = {m.id: f"{m.name} · {m.provider}" if m.provider else m.name for m in models.models}
-    if st.session_state.get("model_id") not in ids:
-        st.session_state["model_id"] = models.default_model if models.default_model in ids else ids[0]
-    st.selectbox("Model", ids, format_func=lambda i: labels[i], key="model_id")
-
-
 # -------------------------------------------------------------------- sidebar
 
 
@@ -161,29 +130,51 @@ def render_sidebar(
     ready_counts = Counter(d.subject for d in documents if d.status == "ready")
 
     with st.sidebar:
-        st.markdown("### Manifold")
-        if st.button("＋ New subject", use_container_width=True):
-            st.session_state["show_new_subject"] = True
+        st.markdown('<div class="brand">◈ Manifold</div>', unsafe_allow_html=True)
+        st.button(
+            "New chat",
+            icon=":material/edit_square:",
+            key="new_chat",
+            use_container_width=True,
+            on_click=state.reset_chat,
+        )
 
-        st.caption("SUBJECTS")
-        if not subjects:
-            st.caption("No subjects yet.")
+        # ---- subjects
+        st.markdown('<div class="side-label">Subjects</div>', unsafe_allow_html=True)
         for index, subject in enumerate(subjects):
+            selected = subject.name == current
             count = ready_counts.get(subject.name, 0)
             label = f"{subject.name}  ·  {count}" if count else subject.name
-            st.button(
+            row, menu = st.columns([6, 1], vertical_alignment="center")
+            row.button(
                 label,
                 key=f"subject_btn_{index}",
-                type="primary" if subject.name == current else "secondary",
+                icon=":material/folder_open:" if selected else ":material/folder:",
+                type="secondary" if selected else "tertiary",
                 use_container_width=True,
                 on_click=_select_subject,
                 args=(subject.name,),
             )
+            if selected:
+                with menu.popover("", icon=":material/more_horiz:", type="tertiary"):
+                    st.button(
+                        "Delete subject",
+                        icon=":material/delete:",
+                        key="delete_subject_btn",
+                        on_click=prompt_delete_subject,
+                    )
+        st.button(
+            "New subject",
+            icon=":material/add:",
+            key="new_subject_btn",
+            type="tertiary",
+            use_container_width=True,
+            on_click=_open_new_subject,
+        )
 
+        # ---- chats in the selected subject
         if current:
-            st.divider()
-            st.button("New chat", icon="✏️", use_container_width=True, on_click=state.reset_chat)
-            st.caption("CHATS")
+            st.markdown('<div class="side-label">Chats</div>', unsafe_allow_html=True)
             try:
                 chats = api_client.list_chats(current)
             except ApiError as exc:
@@ -193,31 +184,35 @@ def render_sidebar(
             if not chats:
                 st.caption("No chats yet in this subject.")
             for chat in chats[:30]:
-                title = chat.title if len(chat.title) <= 30 else chat.title[:29] + "…"
-                row_open, row_menu = st.columns([5, 1])
-                row_open.button(
+                selected = chat.chat_id == st.session_state.get("chat_id")
+                title = chat.title if len(chat.title) <= 28 else chat.title[:27] + "…"
+                row, menu = st.columns([6, 1], vertical_alignment="center")
+                row.button(
                     title,
                     key=f"chat_btn_{chat.chat_id}",
-                    type="primary" if chat.chat_id == st.session_state.get("chat_id") else "secondary",
+                    type="secondary" if selected else "tertiary",
                     use_container_width=True,
                     on_click=_select_chat,
                     args=(chat, current),
                 )
-                with row_menu.popover("⋯"):
+                with menu.popover("", icon=":material/more_horiz:", type="tertiary"):
                     st.button(
                         "Delete chat",
+                        icon=":material/delete:",
                         key=f"chat_del_{chat.chat_id}",
                         on_click=_delete_chat,
                         args=(chat.chat_id,),
                     )
 
-            st.divider()
-            _render_model_picker()
-
-        st.divider()
-        st.caption(user.get("email") or "")
-        st.button("Log out", use_container_width=True, on_click=_logout)
-        st.caption("Theme: open the ⋮ menu (top right) → Settings.")
+        # ---- account (pinned to the bottom of the sidebar)
+        with st.container(key="sidebar_user"):
+            with st.popover(
+                user.get("email") or "Account",
+                icon=":material/account_circle:",
+                use_container_width=True,
+            ):
+                st.caption("Theme: open the ⋮ menu (top right), then Settings.")
+                st.button("Log out", icon=":material/logout:", on_click=_logout, use_container_width=True)
 
     if st.session_state.get("show_new_subject"):
         new_subject_dialog(names)

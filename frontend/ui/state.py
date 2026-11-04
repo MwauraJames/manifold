@@ -11,7 +11,7 @@ def _defaults() -> dict:
     return {
         "user": None,
         "subject": None,
-        "view": "Chat",
+        "docs_panel": None,       # None = automatic (open while the subject has no documents)
         "show_new_subject": False,
         "show_delete_subject": False,
         "chat_id": None,        # None until the first /ask creates the chat
@@ -54,3 +54,9 @@ def reset_all() -> None:
     # the page loaded is still in st.context), and delete the saved login.
     st.session_state["_restore_attempted"] = True
     st.session_state["_session_clear"] = True
+
+
+def docs_panel_open(subject_docs: list) -> bool:
+    """Is the right-hand documents panel showing? Open by default until there is a document."""
+    choice = st.session_state.get("docs_panel")
+    return (not subject_docs) if choice is None else bool(choice)

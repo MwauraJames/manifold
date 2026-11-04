@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, TypeVar
 from urllib.parse import quote
@@ -378,7 +379,10 @@ def upload_files(files: list[tuple[str, bytes]], subject: str) -> UploadBatchRes
     if not files:
         raise ApiError("Choose at least one file.")
     # Repeating the field name "files" is how multipart sends a list.
-    multipart = [("files", (name, data, "application/pdf")) for name, data in files]
+    multipart = [
+        ("files", (name, data, mimetypes.guess_type(name)[0] or "application/octet-stream"))
+        for name, data in files
+    ]
     response = _request(
         "POST",
         "/upload",

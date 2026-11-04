@@ -10,6 +10,9 @@ RESERVED_SUBJECT = "string"  # the backend treats this literal text as "not prov
 
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
+# File types the uploader accepts (the backend decides whether it can parse each one).
+ALLOWED_EXTENSIONS = (".pdf", ".doc", ".docx", ".pptx", ".md", ".txt")
+
 # A document is "active" while the server still has work to do on it.
 ACTIVE_STATUSES = {"queued", "processing"}
 
@@ -100,8 +103,8 @@ def plan_upload(files: list[Any], existing_docs: list[Any], max_mb: int, max_fil
     for f in files:
         key = slug(f.name)
         reason = None
-        if not f.name.lower().endswith(".pdf"):
-            reason = "not a PDF"
+        if not f.name.lower().endswith(ALLOWED_EXTENSIONS):
+            reason = "unsupported file type"
         elif f.size == 0:
             reason = "the file is empty"
         elif f.size > max_mb * 1024 * 1024:

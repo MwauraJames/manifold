@@ -11,7 +11,7 @@ from core.config import (
     STALE_PROCESSING_MIN,
     STALE_QUEUED_MIN,
 )
-from core.utils import ACTIVE_STATUSES, format_date, minutes_since, plan_upload
+from core.utils import ACTIVE_STATUSES, ALLOWED_EXTENSIONS, format_date, minutes_since, plan_upload
 
 STATUS_LABEL = {
     "queued": ":gray[Queued]",
@@ -21,28 +21,44 @@ STATUS_LABEL = {
 }
 
 
-def render_documents(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
-    st.subheader("Upload")
-    _render_upload(subject_name, subject_docs)
+def _close_panel() -> None:
+    st.session_state["docs_panel"] = False
 
-    st.subheader("Your documents")
-    active = any(d.status in ACTIVE_STATUSES for d in subject_docs)
-    # Only poll while something is queued or processing. The fragment re-fetches
-    # the list every few seconds without rerunning the whole app.
-    runner = st.fragment(run_every=POLL_SECONDS if active else None)(_documents_fragment)
-    runner(subject_name, active)
+
+def render_documents_panel(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
+    """The right-hand panel: upload files and manage the subject's documents."""
+    with st.container(key="docs_panel"):
+        title_col, close_col = st.columns([5, 1], vertical_alignment="center")
+        title_col.markdown("#### Documents")
+        close_col.button(
+            "",
+            icon=":material/close:",
+            key="close_docs",
+            type="tertiary",
+            help="Close",
+            on_click=_close_panel,
+        )
+        st.caption(f"Files in **{subject_name}**. Questions are answered from these.")
+        _render_upload(subject_name, subject_docs)
+        st.divider()
+
+        active = any(d.status in ACTIVE_STATUSES for d in subject_docs)
+        # Only poll while something is queued or processing. The fragment re-fetches
+        # the list every few seconds without rerunning the whole app.
+        runner = st.fragment(run_every=POLL_SECONDS if active else None)(_documents_fragment)
+        runner(subject_name, active)
 
 
 def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
     version = st.session_state.get("uploader_version", 0)
     uploaded = st.file_uploader(
-        "Upload PDFs",
-        type=["pdf"],
+        "Add documents",
+        type=[e.lstrip(".") for e in ALLOWED_EXTENSIONS],
         accept_multiple_files=True,
         key=f"uploader_{version}",
         help=(
-            f"PDF only. Up to {MAX_FILES_PER_BATCH} files at a time, "
-            f"{MAX_UPLOAD_MB} MB each. They are processed one after another."
+            f"Up to {MAX_FILES_PER_BATCH} files at a time, {MAX_UPLOAD_MB} MB each. "
+            "They are processed one after another."
         ),
     )
     if not uploaded:
@@ -64,14 +80,14 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
     if plan.replacing:
         names = ", ".join(f"**{n}**" for n in plan.replacing)
         st.warning(
-            "A document with the same name already exists in this subject for: "
-            f"{names}. Uploading will replace {'it' if len(plan.replacing) == 1 else 'them'}."
+            f"These already exist in this subject: {names}. "
+            f"Uploading will replace {'it' if len(plan.replacing) == 1 else 'them'}."
         )
         confirmed = st.checkbox("Replace the existing documents", key=f"replace_{version}")
 
     count = len(plan.accepted)
     label = "Upload 1 file" if count == 1 else f"Upload {count} files"
-    if st.button(label, type="primary", disabled=not confirmed):
+    if st.button(label, type="primary", disabled=not confirmed, use_container_width=True):
         payload = [(f.name, f.getvalue()) for f in plan.accepted]
         with st.spinner(f"Uploading {count} file{'s' if count != 1 else ''}…"):
             try:
@@ -100,12 +116,12 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
     queued_n = sum(1 for d in docs if d.status == "queued")
     processing_n = sum(1 for d in docs if d.status == "processing")
     if was_active and not (queued_n or processing_n):
-        # Everything finished: rerun the whole app so the Chat view and the
-        # sidebar counts see the new "ready" documents.
+        # Everything finished: rerun the whole app so the chat and the counts
+        # see the new "ready" documents.
         st.rerun(scope="app")
 
     if not docs:
-        st.caption("No documents in this subject yet.")
+        st.caption("No documents yet. Add some above to start asking questions.")
         return
 
     if queued_n or processing_n:
@@ -113,20 +129,18 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
         if processing_n:
             parts.append(f"{processing_n} processing")
         if queued_n:
-            parts.append(f"{queued_n} waiting in the queue")
-        st.info(" · ".join(parts).capitalize() + ". This list updates by itself.")
+            parts.append(f"{queued_n} queued")
+        st.caption(" · ".join(parts).capitalize() + ". Updates automatically.")
 
     for index, doc in enumerate(docs):
-        info_col, status_col, menu_col = st.columns([6, 2, 1])
-        with info_col:
+        name_col, menu_col = st.columns([7, 1], vertical_alignment="center")
+        with name_col:
             st.markdown(f"**{doc.filename}**")
+            status_line = STATUS_LABEL.get(doc.status, doc.status)
             uploaded_at = format_date(doc.created_at)
-            if uploaded_at:
-                st.caption(f"Uploaded {uploaded_at}")
-        with status_col:
-            st.markdown(STATUS_LABEL.get(doc.status, doc.status))
+            st.caption(f"{status_line} · {uploaded_at}" if uploaded_at else status_line)
             if doc.status == "failed" and doc.error:
-                st.caption(doc.error[:160])
+                st.caption(doc.error[:140])
             age = minutes_since(doc.updated_at)
             if doc.status == "processing" and age is not None and age > STALE_PROCESSING_MIN:
                 st.caption("Taking longer than expected. You can delete it and try again.")
@@ -136,9 +150,9 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
                     "delete this and upload it again."
                 )
         with menu_col:
-            with st.popover("Delete"):
+            with st.popover("", icon=":material/more_vert:", type="tertiary"):
                 st.write("Delete this document?")
-                if st.button("Confirm delete", key=f"del_doc_{index}_{doc.doc_id}", type="primary"):
+                if st.button("Delete", key=f"del_doc_{index}_{doc.doc_id}", type="primary"):
                     try:
                         api_client.delete_document(doc.doc_id)
                     except ApiError as exc:
