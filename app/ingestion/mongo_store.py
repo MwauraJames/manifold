@@ -1,19 +1,65 @@
 # app/ingestion/mongo_store.py
+import os
+from pathlib import Path
+from urllib.parse import quote_plus
 from datetime import datetime, timezone
 from typing import Optional
 from bson.objectid import ObjectId
+from dotenv import load_dotenv
 from pymongo import MongoClient, ASCENDING, DESCENDING
 import gridfs
 
 from configs.config import Settings
 
+# Always load app/.env reliably regardless of current working directory
+_APP_ENV = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=_APP_ENV, override=True)
+load_dotenv(override=True)
+
 settings = Settings()
+
+
+def _resolve_mongo_uri() -> str:
+    """
+    Reads MONGODB_URI (or MONGO_URI) from .env and safely injects
+    MONGODB_USERNAME and MONGODB_PASSWORD if placeholders are present.
+    """
+    raw_uri = (
+        os.getenv("MONGODB_URI")
+        or os.getenv("MONGO_URI")
+        or getattr(settings, "mongo_uri", "mongodb://localhost:27017")
+    ).strip()
+
+    username = (os.getenv("MONGODB_USERNAME") or "").strip()
+    password = (os.getenv("MONGODB_PASSWORD") or "").strip()
+
+    # If the Atlas URI still has <db_password> or <password> placeholders, replace them
+    if password:
+        encoded_pw = quote_plus(password)
+        for placeholder in ("<db_password>", "<password>", "${MONGODB_PASSWORD}"):
+            if placeholder in raw_uri:
+                raw_uri = raw_uri.replace(placeholder, encoded_pw)
+
+    if username:
+        encoded_user = quote_plus(username)
+        for placeholder in ("<db_username>", "<username>", "${MONGODB_USERNAME}"):
+            if placeholder in raw_uri:
+                raw_uri = raw_uri.replace(placeholder, encoded_user)
+
+    return raw_uri
 
 
 class MongoStore:
     def __init__(self):
-        self.client = MongoClient(settings.mongo_uri)
-        self.db = self.client[settings.mongo_db_name]
+        mongo_uri = _resolve_mongo_uri()
+        mongo_db_name = (
+            os.getenv("MONGODB_DB_NAME")
+            or os.getenv("MONGO_DB_NAME")
+            or getattr(settings, "mongo_db_name", "manifold")
+        )
+
+        self.client = MongoClient(mongo_uri)
+        self.db = self.client[mongo_db_name]
         self.fs = gridfs.GridFS(self.db)
 
         self.documents = self.db["documents"]
