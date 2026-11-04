@@ -1,3 +1,13 @@
+---
+title: Manifold API
+emoji: 🧠
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+startup_duration_timeout: 30m
+---
+
 # 🌌 Manifold — Adaptive Hybrid-RAG & Synthesis Engine
 
 **Manifold** is a production-grade Adaptive Retrieval-Augmented Generation (RAG) backend built with FastAPI, Qdrant, MongoDB, and LiteLLM[cite: 1, 9, 12]. It ingests complex academic PDFs (preserving LaTeX equations and code blocks) into hierarchical parent-child vector spaces and dynamically routes queries between precision hybrid vector search and document-wide stratified synthesis.
