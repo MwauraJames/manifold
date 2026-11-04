@@ -984,6 +984,20 @@ wheels = [
 ]
 
 [[package]]
+name = "llama-index-embeddings-cohere"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cohere" },
+    { name = "llama-index-core" },
+    { name = "tenacity" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bd/7d/b38600ee96f34d1b6f2fe118658498daabb0471a24551a37d0249de0ed15/llama_index_embeddings_cohere-0.9.0.tar.gz", hash = "sha256:d4f320bdd0274c3e3b7e4073221d3ac15423fa6a5cfa17541675cd6ea78949b9", size = 6741, upload-time = "2026-08-29T15:34:59.56Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/98/7b58dafa96c627a10c98563f399cc8a5025039a415843f1275565419a558/llama_index_embeddings_cohere-0.9.0-py3-none-any.whl", hash = "sha256:807f17766f466532d041cbf6c5370cdee11381bb59566db03e3ec68246a18f70", size = 6352, upload-time = "2026-08-29T15:34:58.809Z" },
+]
+
+[[package]]
 name = "llama-index-embeddings-fastembed"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1061,6 +1075,7 @@ dependencies = [
     { name = "litellm" },
     { name = "llama-cloud" },
     { name = "llama-index-core" },
+    { name = "llama-index-embeddings-cohere" },
     { name = "llama-index-embeddings-fastembed" },
     { name = "llama-index-vector-stores-qdrant" },
     { name = "pydantic-settings" },
@@ -1081,6 +1096,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.106.3" },
     { name = "llama-cloud", specifier = ">=2.16.0" },
     { name = "llama-index-core", specifier = ">=0.14.25" },
+    { name = "llama-index-embeddings-cohere", specifier = ">=0.9.0" },
     { name = "llama-index-embeddings-fastembed", specifier = ">=0.1.7" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.10.4" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
