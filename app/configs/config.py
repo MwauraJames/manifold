@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     rerank_model: str = "rerank-v4.0-pro"
     rerank_top_n: int = 10
-    rerank_threshold: float = 0.65
+    rerank_threshold: float = 0.75
     leaf_score_threshold: float = 0.00
 
     # Maximum characters (~4 chars per token) sampled across documents for global_synthesis queries
