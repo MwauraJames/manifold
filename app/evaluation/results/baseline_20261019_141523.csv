@@ -1,3 +1,0 @@
-idx,question,gold,expanded_query,answer,passage_ids,contexts,in_candidates,in_context,correct,faithful,baseline_answer,baseline_correct,seconds,error
-41,What is named after him?,The Celsius crater on the Moon,,,,,,,,,,,9.76,TypeError: rerank_documents() got an unexpected keyword argument 'top_n'
-75,What was given by Aristotle for the hardened shield like forewings?,"The name ""Coleoptera"".",,,,,,,,,,,9.75,TypeError: rerank_documents() got an unexpected keyword argument 'top_n'

@@ -1,2 +1,0 @@
-timestamp,run_name,questions,errors,expand,top_k,merge_ratio,rerank_top_n,chunk_sizes,corpus_group,in_candidates,in_context,correct,faithful,baseline_correct,avg_seconds
-2026-10-19T14:33:24,baseline,50,0,True,50,0.5,3,"[2048, 512, 128]",1,0.75,0.75,0.84,0.8,0.66,18.92
