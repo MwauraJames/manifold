@@ -6,6 +6,8 @@
 .env
 **/.env
 
+env.yaml
+
 # Data and caches: mounted as volumes, never baked into the image
 qdrant_storage
 uploads
