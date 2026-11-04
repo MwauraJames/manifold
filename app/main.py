@@ -31,7 +31,7 @@ import cohere
 from account.auth import supabase, get_current_user
 from ingestion.parse import parse_document
 from ingestion.chunk import chunk_documents
-from ingestion.storage import Storage
+from app.ingestion.qdrant_store import Storage
 from ingestion.mongo_store import MongoStore
 from ingestion.embed import Embed
 from ingestion.reset_store import delete_by_doc_id, delete_by_subject, reset_all
