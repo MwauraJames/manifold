@@ -47,6 +47,10 @@ def reset_chat() -> None:
 
 
 def reset_all() -> None:
-    """Log out: wipe everything for this browser session."""
+    """Log out: wipe everything for this browser session and forget the saved login."""
     st.session_state.clear()
     init_state()
+    # Never auto-login again in this browser session (the cookie the server saw when
+    # the page loaded is still in st.context), and delete the saved login.
+    st.session_state["_restore_attempted"] = True
+    st.session_state["_session_clear"] = True

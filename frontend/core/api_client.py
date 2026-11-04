@@ -11,7 +11,7 @@ import streamlit as st
 
 from core.config import API_URL, ASK_TIMEOUT_S, UPLOAD_TIMEOUT_S
 
-logger = logging.getLogger("study_assistant.api")
+logger = logging.getLogger("manifold.api")
 
 CONNECT_TIMEOUT = 5
 STATUS_READ_TIMEOUT = 10
@@ -146,6 +146,9 @@ def _set_tokens(access_token: str | None, refresh_token: str | None) -> None:
         user["access_token"] = access_token
         user["refresh_token"] = refresh_token
         st.session_state["user"] = user
+        # Refresh tokens rotate, so the copy saved in the browser must be rewritten
+        # (core/session_store.py does that at the end of the run).
+        st.session_state["_session_dirty"] = True
 
 
 def _q(value: str) -> str:
@@ -230,6 +233,35 @@ def _try_refresh() -> bool:
         return False
     _set_tokens(access, refresh)
     return True
+
+
+def refresh_with(refresh_token: str) -> AuthResult | None:
+    """
+    Turn a saved refresh token into a fresh session (used to stay logged in
+    across browser refreshes). Returns None if the server rejects the token,
+    and raises ApiError if the server can't be reached or fails.
+    """
+    try:
+        response = _session.request(
+            "POST",
+            f"{API_URL}/auth/refresh",
+            json={"refresh_token": refresh_token},
+            timeout=(CONNECT_TIMEOUT, STATUS_READ_TIMEOUT),
+        )
+    except Exception as exc:
+        raise _map_request_error(exc) from exc
+    if 400 <= response.status_code < 500:
+        return None
+    payload = _json_or_error(response)
+    access = payload.get("access_token")
+    if not access:
+        return None
+    return AuthResult(
+        user_id=payload.get("user_id") or "",
+        email="",
+        access_token=access,
+        refresh_token=payload.get("refresh_token") or refresh_token,
+    )
 
 
 def _request(
@@ -463,7 +495,7 @@ def create_chat(
 ) -> ChatSummary:
     # Not used by the UI: chats are created by the first /ask so they get a
     # title from the first question. Calling this first freezes the title at
-    # "New Study Session".
+    # "New chat".
     payload: dict[str, Any] = {}
     if subject:
         payload["subject"] = subject
@@ -475,7 +507,7 @@ def create_chat(
     item = _json_or_error(response)
     return ChatSummary(
         chat_id=item.get("chat_id") or "",
-        title=item.get("title") or title or "New Study Session",
+        title=item.get("title") or title or "New chat",
         subject=item.get("subject") or subject,
         doc_id=item.get("doc_id") or doc_id,
         updated_at=item.get("updated_at"),
@@ -495,7 +527,7 @@ def list_chats(subject: str | None = None) -> list[ChatSummary]:
         result.append(
             ChatSummary(
                 chat_id=chat_id,
-                title=chat.get("title") or "New Study Session",
+                title=chat.get("title") or "New chat",
                 subject=chat.get("subject"),
                 doc_id=chat.get("doc_id"),
                 updated_at=chat.get("updated_at"),

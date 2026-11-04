@@ -30,4 +30,5 @@ POLL_SECONDS = _int("POLL_SECONDS", 3)
 STALE_PROCESSING_MIN = _int("STALE_PROCESSING_MIN", 20)
 STALE_QUEUED_MIN = _int("STALE_QUEUED_MIN", 60)
 MAX_FILES_PER_BATCH = _int("MAX_FILES_PER_BATCH", 10)
+SESSION_DAYS = _int("SESSION_DAYS", 30)  # how long a browser stays logged in
 ENABLE_DELETE = _bool(os.getenv("ENABLE_DELETE", "true"), default=True)

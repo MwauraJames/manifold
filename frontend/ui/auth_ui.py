@@ -10,6 +10,8 @@ from ui import state
 def _finish(user: dict) -> None:
     state.init_state()
     st.session_state["user"] = user
+    st.session_state["_session_dirty"] = True   # save the login in the browser
+    st.session_state["_session_clear"] = False
     state.reset_chat()
     st.session_state["subject"] = None
     st.rerun()
@@ -18,7 +20,7 @@ def _finish(user: dict) -> None:
 def render_auth() -> None:
     _, center, _ = st.columns([1, 2, 1])
     with center:
-        st.title("Study Assistant")
+        st.title("Manifold")
         st.caption("Upload your notes, organise them by subject, and ask questions about them.")
 
         notice = st.session_state.pop("auth_notice", None)

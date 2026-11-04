@@ -161,7 +161,7 @@ def render_sidebar(
     ready_counts = Counter(d.subject for d in documents if d.status == "ready")
 
     with st.sidebar:
-        st.markdown("### Study Assistant")
+        st.markdown("### Manifold")
         if st.button("＋ New subject", use_container_width=True):
             st.session_state["show_new_subject"] = True
 

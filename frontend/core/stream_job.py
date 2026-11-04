@@ -8,7 +8,7 @@ from typing import Any
 from core import api_client
 from core.api_client import ApiError
 
-logger = logging.getLogger("study_assistant.stream")
+logger = logging.getLogger("manifold.stream")
 
 
 @dataclass
