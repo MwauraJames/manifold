@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     temparature: float = 0.2
 
-    rerank_model: str = "rerank-v4.0-pro"
+    rerank_model: str = "embed-english-v3.0"
     rerank_top_n: int = 10
     rerank_threshold: float = 0.68
     leaf_score_threshold: float = 0.00
