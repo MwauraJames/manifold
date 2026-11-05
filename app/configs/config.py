@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     temparature: float = 0.2
 
-    rerank_model: str = "embed-english-v3.0"
+    rerank_model: str = "rerank-v4.0-pro"
     rerank_top_n: int = 10
     rerank_threshold: float = 0.68
     leaf_score_threshold: float = 0.00
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # Maximum characters (~4 chars per token) sampled across documents for global_synthesis queries
     synthesis_max_chars: int = 8000
 
-    embed_model: str = "BAAI/bge-large-en-v1.5"
+    embed_model: str = "embed-english-v3.0"
     embed_model_cache_dir: str = "./models"
 
     supabase_url: str
