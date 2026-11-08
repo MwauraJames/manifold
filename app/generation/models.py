@@ -148,6 +148,7 @@ PROVIDER_CATALOG: Dict[str, dict] = {
                 "id": "groq/llama-3.1-8b-instant",
                 "name": "Llama 3.1 8B Instant (Groq)",
             },
+        
         ],
     },
     "ANTHROPIC_API_KEY": {
@@ -175,7 +176,7 @@ PROVIDER_CATALOG: Dict[str, dict] = {
         "provider": "Google Gemini",
         "models": [
             {"id": "gemini/gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
-            {"id": "gemini/gemini-2.5-pro", "name": "Gemini 2.5 Pro"},
+            
         ],
     },
     "OPENROUTER_API_KEY": {
@@ -371,3 +372,48 @@ def resolve_model_config(requested_model: str | None = None) -> dict:
         f"Model '{target_id}' is not available or its API key is missing. "
         f"Available models: {valid_ids}"
     )
+
+def get_vision_model_candidates() -> List[str]:
+    """
+    Returns an ordered list of vision-capable LiteLLM model IDs based on
+    configured API keys in .env, starting with gemini/gemini-3.8-flash.
+    """
+    if os.getenv("GOOGLE_API_KEY") and not os.getenv("GEMINI_API_KEY"):
+        os.environ["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+
+    candidates: List[str] = []
+
+    # 1. Explicit override in .env (e.g., VISION_MODEL=gemini/gemini-3.8-flash)
+    custom_vision = os.getenv("VISION_MODEL", "").strip()
+    if custom_vision:
+        candidates.append(custom_vision)
+
+    # 2. Provider-based vision models matching your active PROVIDER_CATALOG
+    vision_catalog = [
+        ("GEMINI_API_KEY", "gemini/gemini-3.8-flash"),
+        #("GEMINI_API_KEY", "gemini/gemini-2.5-pro"),
+        ("OPENAI_API_KEY", "openai/gpt-4.1-mini"),
+        ("OPENAI_API_KEY", "openai/gpt-4o-mini"),
+        ("ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
+        ("ANTHROPIC_API_KEY", "anthropic/claude-sonnet-4-6"),
+    ]
+
+    for env_key, model_id in vision_catalog:
+        val = os.getenv(env_key, "").strip()
+        if val and not val.startswith("your_") and model_id not in candidates:
+            candidates.append(model_id)
+
+    # Optional: If a specific Groq vision model is set in .env, include it
+    groq_vision = os.getenv("GROQ_VISION_MODEL", "").strip()
+    if groq_vision and os.getenv("GROQ_API_KEY", "").strip():
+        full_groq = groq_vision if groq_vision.startswith("groq/") else f"groq/{groq_vision}"
+        if full_groq not in candidates:
+            candidates.append(full_groq)
+
+    if not candidates:
+        raise RuntimeError(
+            "No vision-capable LLM API key found. Set GEMINI_API_KEY, "
+            "OPENAI_API_KEY, or ANTHROPIC_API_KEY in app/.env."
+        )
+
+    return candidates
