@@ -89,3 +89,51 @@ def login(email: str, password: str) -> dict[str, str | None]:
     if not result.user_id or not result.access_token:
         raise AuthError(GENERIC_LOGIN_ERROR)
     return public_user(result)
+
+
+# ---------------------------------------------------------------- forgot password
+
+CODE_RE = re.compile(r"^\d{6,10}$")
+
+
+def request_reset(email: str) -> str:
+    """Email a reset code. Returns the cleaned email. Never reveals whether the account exists."""
+    email = (email or "").strip()
+    error = validate_email(email)
+    if error:
+        raise AuthError(error)
+    try:
+        api_client.forgot_password(email)
+    except ApiError as exc:
+        # The backend's 400 text is a raw exception message: classify it, never show it.
+        text = (exc.message or "").lower()
+        if "second" in text or "rate" in text or "security purposes" in text:
+            raise AuthError("Please wait a minute before asking for another code.") from exc
+        raise AuthError("Couldn't send the code right now. Please try again in a minute.") from exc
+    return email
+
+
+def reset_password(email: str, code: str, new_password: str, confirm_password: str) -> dict[str, str | None]:
+    """Check the emailed code, set the new password and return a logged-in user."""
+    code = (code or "").strip().replace(" ", "")
+    if not CODE_RE.fullmatch(code):
+        raise AuthError("Enter the code from the email (digits only).")
+    error = validate_password(new_password)
+    if error:
+        raise AuthError(error)
+    if new_password != confirm_password:
+        raise AuthError("Passwords do not match.")
+    try:
+        result = api_client.reset_password(email, code, new_password)
+    except ApiError as exc:
+        text = (exc.message or "").lower()
+        if "password" in text and any(w in text for w in ("weak", "different", "short", "characters", "same")):
+            raise AuthError(
+                "That password was rejected. Choose a stronger one that is different from your old password."
+            ) from exc
+        if exc.status_code in {400, 401, 403, 422}:
+            raise AuthError("That code is invalid or has expired. Request a new one.") from exc
+        raise AuthError(exc.message) from exc
+    if not result.access_token or not result.user_id:
+        raise AuthError("Your password may have been updated. Try logging in with the new password.")
+    return public_user(result)

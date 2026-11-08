@@ -15,7 +15,7 @@ BASE_CSS = """
 [data-testid="stSidebar"] .stButton > button > div > span { justify-content: flex-start; width: 100%; text-align: left; }
 [data-testid="stSidebar"] [data-testid="stPopoverButton"][kind="tertiary"] { padding-left: .35rem; padding-right: .35rem; }
 /* icon-only popovers: hide the dropdown chevron */
-[data-testid="stPopoverButton"][kind="tertiary"] > div[aria-hidden="true"] { display: none; }
+[data-testid="stPopoverButton"][kind="tertiary"] div[aria-hidden="true"] { display: none; }
 .st-key-new_chat button { border-radius: 999px; background: rgba(128,128,128,.16); border: none; }
 .st-key-sidebar_user { position: sticky; bottom: 0; padding: .6rem 0 .2rem; background: inherit; }
 .side-label { font-size: .78rem; letter-spacing: .02em; opacity: .6; margin: .9rem 0 .2rem .25rem; }
@@ -23,11 +23,17 @@ BASE_CSS = """
 
 /* ---------- conversation ---------- */
 [class*="st-key-user_msg_"] {
-  margin-left: auto; width: fit-content; max-width: 82%;
-  background: rgba(128,128,128,.18); border-radius: 22px; padding: .35rem 1.15rem; margin-top: 1.1rem;
+  margin-left: auto; width: fit-content; max-width: 82%; gap: 0;
+  background: rgba(128,128,128,.18); border-radius: 22px; padding: .7rem 1.25rem; margin-top: 1.1rem;
 }
-[class*="st-key-user_msg_"] p { margin: .25rem 0; }
+/* Streamlit cancels paragraph spacing with a negative margin; zero both so the bubble isn't clipped */
+[class*="st-key-user_msg_"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
+[class*="st-key-user_msg_"] p { margin: 0 !important; line-height: 1.55; }
 [class*="st-key-asst_msg_"] { margin: .4rem 0 .2rem; }
+/* answers often start with big markdown headings: keep them in proportion */
+[class*="st-key-asst_msg_"] h1 { font-size: 1.55rem; line-height: 1.3; padding: .4rem 0 .1rem; }
+[class*="st-key-asst_msg_"] h2 { font-size: 1.3rem; line-height: 1.3; padding: .4rem 0 .1rem; }
+[class*="st-key-asst_msg_"] h3 { font-size: 1.12rem; line-height: 1.3; padding: .3rem 0 .1rem; }
 .st-key-user_actions, .st-key-asst_actions { gap: 0; margin-top: -.3rem; }
 .st-key-user_actions button, .st-key-asst_actions button { opacity: .75; }
 

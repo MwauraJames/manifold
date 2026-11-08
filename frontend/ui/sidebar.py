@@ -61,12 +61,12 @@ def prompt_delete_subject() -> None:
 # -------------------------------------------------------------------- dialogs
 
 
-@st.dialog("New subject")
+@st.dialog("New collection")
 def new_subject_dialog(existing_names: list[str]) -> None:
     # Clear the flag first so the dialog doesn't reopen on the next full rerun.
     st.session_state["show_new_subject"] = False
-    name = st.text_input("Name", max_chars=60, placeholder="e.g. Machine Learning")
-    description = st.text_input("Description (optional)", max_chars=200)
+    name = st.text_input("Name", max_chars=60, placeholder="e.g. Biology 101, Q4 roadmap, onboarding docs")
+    description = st.text_input("Description (optional)", max_chars=200, placeholder="What is this collection for?")
     if st.button("Create", type="primary"):
         error = validate_subject_name(name, existing_names)
         if error:
@@ -84,7 +84,7 @@ def new_subject_dialog(existing_names: list[str]) -> None:
         st.rerun()
 
 
-@st.dialog("Delete subject")
+@st.dialog("Delete collection")
 def delete_subject_dialog(subject_name: str) -> None:
     st.session_state["show_delete_subject"] = False
     try:
@@ -140,7 +140,7 @@ def render_sidebar(
         )
 
         # ---- subjects
-        st.markdown('<div class="side-label">Subjects</div>', unsafe_allow_html=True)
+        st.markdown('<div class="side-label">Collections</div>', unsafe_allow_html=True)
         for index, subject in enumerate(subjects):
             selected = subject.name == current
             count = ready_counts.get(subject.name, 0)
@@ -158,13 +158,13 @@ def render_sidebar(
             if selected:
                 with menu.popover("", icon=":material/more_horiz:", type="tertiary"):
                     st.button(
-                        "Delete subject",
+                        "Delete collection",
                         icon=":material/delete:",
                         key="delete_subject_btn",
                         on_click=prompt_delete_subject,
                     )
         st.button(
-            "New subject",
+            "New collection",
             icon=":material/add:",
             key="new_subject_btn",
             type="tertiary",
@@ -182,7 +182,7 @@ def render_sidebar(
                 st.caption(exc.message)
             chats = sorted(chats, key=lambda c: str(c.updated_at or ""), reverse=True)
             if not chats:
-                st.caption("No chats yet in this subject.")
+                st.caption("No chats yet in this collection.")
             for chat in chats[:30]:
                 selected = chat.chat_id == st.session_state.get("chat_id")
                 title = chat.title if len(chat.title) <= 28 else chat.title[:27] + "…"

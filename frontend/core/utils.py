@@ -10,11 +10,35 @@ RESERVED_SUBJECT = "string"  # the backend treats this literal text as "not prov
 
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
-# File types the uploader accepts (the backend decides whether it can parse each one).
-ALLOWED_EXTENSIONS = (".pdf", ".doc", ".docx", ".pptx", ".md", ".txt")
+# File types the uploader accepts. Keep this in sync with ALLOWED_UPLOAD_EXTENSIONS
+# in the backend's main.py: it rejects the WHOLE batch if one file has another type.
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+ALLOWED_EXTENSIONS = (".pdf", *IMAGE_EXTENSIONS)
+
+# Sent explicitly so we never depend on the OS/Python mimetypes table (older Pythons
+# don't know .webp). The backend passes this on so it can route images vs PDFs.
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 # A document is "active" while the server still has work to do on it.
 ACTIVE_STATUSES = {"queued", "processing"}
+
+
+def _ext(filename: str) -> str:
+    return "." + filename.rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+
+
+def is_image(filename: str) -> bool:
+    return _ext(filename) in IMAGE_EXTENSIONS
+
+
+def content_type_for(filename: str) -> str:
+    return CONTENT_TYPES.get(_ext(filename), "application/octet-stream")
 
 
 def slug(value: str) -> str:
@@ -63,16 +87,16 @@ def minutes_since(value: Any) -> float | None:
 def validate_subject_name(name: str, existing: list[str]) -> str | None:
     cleaned = (name or "").strip()
     if not cleaned:
-        return "Enter a subject name."
+        return "Enter a name for the collection."
     if len(cleaned) > MAX_SUBJECT_LEN:
         return f"Keep the name under {MAX_SUBJECT_LEN} characters."
     if cleaned.lower() == RESERVED_SUBJECT:
         return "That name is reserved. Pick another."
     for other in existing:
         if other.lower() == cleaned.lower():
-            return "You already have a subject with that name."
+            return "You already have a collection with that name."
         if slug(other) == slug(cleaned):
-            return f"Too similar to the existing subject '{other}'."
+            return f"Too similar to the existing collection '{other}'."
     return None
 
 

@@ -29,6 +29,7 @@ COOKIE_NAME = "manifold_session"
 _DIRTY = "_session_dirty"        # tokens changed: rewrite the cookie
 _CLEAR = "_session_clear"        # logged out or token rejected: delete the cookie
 _ATTEMPTED = "_restore_attempted"
+_STORE = "_store_credentials"  # a login/sign-up just succeeded: offer to save it
 
 
 # ------------------------------------------------------------------- reading
@@ -114,10 +115,63 @@ def flush() -> None:
         st.session_state[_CLEAR] = False
         st.session_state[_DIRTY] = False
         _inject(None)
-        return
-    if not st.session_state.get(_DIRTY):
-        return
-    st.session_state[_DIRTY] = False
-    user = st.session_state.get("user")
-    if isinstance(user, dict) and user.get("refresh_token"):
-        _inject({"refresh_token": user["refresh_token"], "email": user.get("email") or ""})
+    elif st.session_state.get(_DIRTY):
+        st.session_state[_DIRTY] = False
+        user = st.session_state.get("user")
+        if isinstance(user, dict) and user.get("refresh_token"):
+            _inject({"refresh_token": user["refresh_token"], "email": user.get("email") or ""})
+
+    if st.session_state.get(_STORE):
+        st.session_state[_STORE] = False
+        _render(_STORE_JS)
+
+
+# ------------------------------------------------- browser password manager
+#
+# Streamlit renders no real <form> element, so browsers can't tell when a sign-up
+# or login succeeded and often don't offer to save the password. Chrome and Edge
+# support the Credential Management API, which lets a page hand over a credential
+# explicitly. The capture script remembers what was typed when a form is
+# submitted (in the browser only, never sent to the server); once the server
+# confirms success, the store script gives it to the browser. Other browsers
+# ignore both scripts and use their own detection.
+
+_CAPTURE_JS = """
+<script>
+  (function () {
+    try {
+      var w = window.parent, d = w.document;
+      if (w.__manifoldCapture) return;
+      w.__manifoldCapture = true;
+      function grab() {
+        var u = d.querySelector('input[autocomplete="username"]');
+        var p = d.querySelector('input[autocomplete="new-password"], input[autocomplete="current-password"]');
+        if (u && p && u.value && p.value) w.__manifoldPending = { id: u.value, password: p.value };
+      }
+      d.addEventListener("click", function (e) {
+        if (e.target.closest && e.target.closest('[data-testid="stFormSubmitButton"]')) grab();
+      }, true);
+      d.addEventListener("keydown", function (e) { if (e.key === "Enter") grab(); }, true);
+    } catch (e) {}
+  })();
+</script>
+"""
+
+_STORE_JS = """
+<script>
+  (function () {
+    try {
+      var w = window.parent, c = w.__manifoldPending;
+      if (c && c.id && c.password && w.PasswordCredential && w.navigator.credentials) {
+        w.navigator.credentials.store(new w.PasswordCredential({ id: c.id, password: c.password, name: c.id }));
+      }
+      w.__manifoldPending = null;
+    } catch (e) {}
+  })();
+</script>
+"""
+
+
+def install_credential_capture() -> None:
+    """Render on the login/sign-up pages so the browser can be asked to save the password."""
+    _render(_CAPTURE_JS)

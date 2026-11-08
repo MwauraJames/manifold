@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import mimetypes
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, TypeVar
 from urllib.parse import quote
@@ -11,6 +10,7 @@ import requests
 import streamlit as st
 
 from core.config import API_URL, ASK_TIMEOUT_S, UPLOAD_TIMEOUT_S
+from core.utils import content_type_for
 
 logger = logging.getLogger("manifold.api")
 
@@ -331,6 +331,23 @@ def login(email: str, password: str) -> AuthResult:
     return result
 
 
+def forgot_password(email: str) -> None:
+    """Ask the backend to email a password-reset code. It always answers 'sent'."""
+    response = _request("POST", "/auth/forgot-password", authed=False, json={"email": email})
+    _json_or_error(response)
+
+
+def reset_password(email: str, token: str, new_password: str) -> AuthResult:
+    """Verify the emailed code and set the new password. Returns a logged-in session."""
+    response = _request(
+        "POST",
+        "/auth/reset-password",
+        authed=False,
+        json={"email": email, "token": token, "new_password": new_password},
+    )
+    return _auth_result(_json_or_error(response), email)
+
+
 def _auth_result(payload: dict[str, Any], fallback_email: str) -> AuthResult:
     return AuthResult(
         user_id=payload.get("user_id") or "",
@@ -372,7 +389,7 @@ def list_models() -> ModelList:
 
 def upload_files(files: list[tuple[str, bytes]], subject: str) -> UploadBatchResult:
     """
-    Upload several PDFs in ONE request. The backend saves them all, queues
+    Upload several files (PDFs or images) in ONE request. The backend saves them all, queues
     them, and processes them one after another (status: queued -> processing
     -> ready/failed). `files` is a list of (filename, file_bytes).
     """
@@ -380,7 +397,7 @@ def upload_files(files: list[tuple[str, bytes]], subject: str) -> UploadBatchRes
         raise ApiError("Choose at least one file.")
     # Repeating the field name "files" is how multipart sends a list.
     multipart = [
-        ("files", (name, data, mimetypes.guess_type(name)[0] or "application/octet-stream"))
+        ("files", (name, data, content_type_for(name)))
         for name, data in files
     ]
     response = _request(

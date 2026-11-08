@@ -11,7 +11,14 @@ from core.config import (
     STALE_PROCESSING_MIN,
     STALE_QUEUED_MIN,
 )
-from core.utils import ACTIVE_STATUSES, ALLOWED_EXTENSIONS, format_date, minutes_since, plan_upload
+from core.utils import (
+    ACTIVE_STATUSES,
+    ALLOWED_EXTENSIONS,
+    format_date,
+    is_image,
+    minutes_since,
+    plan_upload,
+)
 
 STATUS_LABEL = {
     "queued": ":gray[Queued]",
@@ -38,7 +45,7 @@ def render_documents_panel(subject_name: str, subject_docs: list[DocumentRecord]
             help="Close",
             on_click=_close_panel,
         )
-        st.caption(f"Files in **{subject_name}**. Questions are answered from these.")
+        st.caption(f"Files in **{subject_name}**. Answers come from these.")
         _render_upload(subject_name, subject_docs)
         st.divider()
 
@@ -52,11 +59,13 @@ def render_documents_panel(subject_name: str, subject_docs: list[DocumentRecord]
 def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
     version = st.session_state.get("uploader_version", 0)
     uploaded = st.file_uploader(
-        "Add documents",
+        "Add documents or images",
         type=[e.lstrip(".") for e in ALLOWED_EXTENSIONS],
         accept_multiple_files=True,
         key=f"uploader_{version}",
         help=(
+            "PDFs and images (PNG, JPG, WebP). Images are read for their text and content, "
+            "so photos of notes, slides and diagrams work. "
             f"Up to {MAX_FILES_PER_BATCH} files at a time, {MAX_UPLOAD_MB} MB each. "
             "They are processed one after another."
         ),
@@ -76,11 +85,13 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
     if not plan.accepted:
         return
 
+    _render_image_previews(plan.accepted)
+
     confirmed = True
     if plan.replacing:
         names = ", ".join(f"**{n}**" for n in plan.replacing)
         st.warning(
-            f"These already exist in this subject: {names}. "
+            f"These already exist in this collection: {names}. "
             f"Uploading will replace {'it' if len(plan.replacing) == 1 else 'them'}."
         )
         confirmed = st.checkbox("Replace the existing documents", key=f"replace_{version}")
@@ -104,6 +115,18 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
             f"{queued} file{'s' if queued != 1 else ''} queued. They'll be processed one at a time."
         )
         st.rerun()
+
+
+def _render_image_previews(accepted: list) -> None:
+    """Small thumbnails of the images about to be uploaded, so a wrong photo is caught early."""
+    images = [f for f in accepted if is_image(f.name)]
+    if not images:
+        return
+    with st.expander(f"Preview {len(images)} image{'s' if len(images) != 1 else ''}", expanded=False):
+        cols = st.columns(min(len(images), 3))
+        for i, f in enumerate(images):
+            with cols[i % len(cols)]:
+                st.image(f, caption=f.name, use_container_width=True)
 
 
 def _documents_fragment(subject: str, was_active: bool) -> None:
@@ -135,7 +158,8 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
     for index, doc in enumerate(docs):
         name_col, menu_col = st.columns([7, 1], vertical_alignment="center")
         with name_col:
-            st.markdown(f"**{doc.filename}**")
+            icon = ":material/image:" if is_image(doc.filename) else ":material/description:"
+            st.markdown(f"{icon} **{doc.filename}**")
             status_line = STATUS_LABEL.get(doc.status, doc.status)
             uploaded_at = format_date(doc.created_at)
             st.caption(f"{status_line} · {uploaded_at}" if uploaded_at else status_line)

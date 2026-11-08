@@ -57,11 +57,11 @@ def page() -> None:
         with st.container(key="hero"):
             st.markdown(
                 '<div class="hero-title">Welcome to Manifold</div>'
-                '<div class="hero-sub">Create a subject, add your notes, then ask questions about them.</div>',
+                '<div class="hero-sub">Add your documents or images, then ask questions about them. Group them into collections: a course, a project, a client.</div>',
                 unsafe_allow_html=True,
             )
             _, middle, _ = st.columns([1, 2, 1])
-            if middle.button("Create your first subject", type="primary", use_container_width=True, key="empty_new_subject"):
+            if middle.button("Create your first collection", type="primary", use_container_width=True, key="empty_new_subject"):
                 st.session_state["show_new_subject"] = True
                 st.rerun()
         return

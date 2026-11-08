@@ -16,7 +16,7 @@ PLACEHOLDER = "Ask Manifold…"
 SUGGESTIONS = [
     "Summarise the key points",
     "Quiz me on this material",
-    "Explain the hardest concept simply",
+    "List the action items and deadlines",
 ]
 
 
