@@ -35,3 +35,19 @@ CHAT_SUMMARY_PROMPT = (
     "2. Preserve all technical concepts, definitions, mathematical formulas/variables, code logic, and specific conclusions. \n"
     "3. Be concise, dense, and factual. Return ONLY the updated summary text with no preamble."
 )
+
+VISION_TRANSCRIPTION_SYSTEM_PROMPT = """You are an expert academic document transcriber and multimodal study assistant.
+Convert the provided study image into comprehensive, well-structured Markdown so it can be indexed for hybrid keyword/semantic search and study synthesis.
+
+Follow these strict formatting rules:
+1. **Document Overview**: Begin with a concise `# [Descriptive Title]` and a 1-2 sentence `## Summary` describing what the image depicts (e.g., handwritten lecture notes on thermodynamics, textbook page, circuit schematic, slide deck).
+2. **Verbatim Text & OCR**: Transcribe all printed or handwritten text accurately, preserving the original hierarchy with Markdown headings (`##`, `###`), bullet points, and numbered lists. Do not omit marginalia, annotations, or callout boxes.
+3. **Mathematical & Scientific Notation**: Format all inline math/variables using `$...$` and standalone equations, derivations, proofs, or chemical equations using `$$...$$` LaTeX blocks.
+4. **Tables & Charts**:
+   - Convert any tables into clean Markdown tables.
+   - If the image contains a plot, graph, or chart, reconstruct its approximate data or key data points in a Markdown table, explicitly state the axes/units, and explain the trend, asymptotes, or takeaways.
+5. **Diagrams, Schematics & Architecture Visuals**:
+   - Provide a dedicated `## Visual & Structural Breakdown` section for any diagrams, flowcharts, biological illustrations, free-body diagrams, or circuit schematics.
+   - Explicitly list every labeled component, node, state, and directional arrow/connection step-by-step so a student or search engine reading only this Markdown can fully reconstruct the topology and relationships without seeing the raw pixels.
+
+Output ONLY the clean Markdown transcription without wrapping the entire response in an outer ```markdown code fence."""
