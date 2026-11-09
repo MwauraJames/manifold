@@ -236,8 +236,20 @@ class NewChatRequest(BaseModel):
 # ---------- Clients & Directories ----------
 logger.info("[Init] Initializing Qdrant Storage, MongoStore, Embed model, LlamaCloud, and Cohere...")
 storage = Storage()          # Qdrant (Vectors + Hybrid Search)
-mongo = MongoStore()         # MongoDB (Raw PDFs/Images, Parsed Docs, Chat History, Subjects)
+mongo = MongoStore()    
+     # MongoDB (Raw PDFs/Images, Parsed Docs, Chat History, Subjects)
 embed_model = Embed().get_embedding()
+# Warm up local ONNX embedding model at boot so the first /ask doesn't lag
+try:
+    embed_model.get_query_embedding("warmup")
+    # Also pre-initialize QdrantVectorStore + sparse BM25 model at boot
+    vs = storage.vector_store()
+    if hasattr(vs, "_sparse_doc_fn") and vs._sparse_doc_fn is not None:
+        vs._sparse_doc_fn(["warmup"])
+    logger.info("[Init] Dense + Sparse embedding models and QdrantVectorStore warmed up.")
+except Exception as e:
+    logger.warning("[Init] Warmup warning: %s", e)
+
 client = LlamaCloud()
 co = cohere.ClientV2()
 logger.info("[Init] All core clients initialized successfully.")
@@ -1111,6 +1123,7 @@ def ask(
         else body.chat_id
     )
 
+    # Inside @app.post("/ask") in app/main.py:
     existing_chat = mongo.get_chat_session(chat_id)
     if existing_chat:
         if existing_chat.get("user_id") != user_id:
@@ -1119,6 +1132,17 @@ def ask(
             doc_id = existing_chat["doc_id"]
         if not subject and existing_chat.get("subject"):
             subject = existing_chat["subject"]
+    else:
+        # Only create subject & chat session in MongoDB Atlas if this is a brand-new chat!
+        if subject:
+            mongo.ensure_subject(user_id=user_id, subject=subject)
+        mongo.ensure_chat_session(
+            chat_id=chat_id,
+            user_id=user_id,
+            subject=subject,
+            doc_id=doc_id,
+            title=body.query[:60],
+        )
 
     body.doc_id = doc_id
     body.subject = subject
