@@ -4,7 +4,7 @@ from typing import Optional
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    top_k: int = 50
+    top_k: int = 20
     merge_ratio: float = 0.5       # Merge when > 50% of a parent's leaves are retrieved
     min_merge_leaves: int = 2
     chunk_sizes: list[int] = [512, 128]
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     mongo_db_name: str = "study_assistant"
 
     # Utility LLM Models (passed to resolve_model_config)
-    expand_model: str = "groq/openai/gpt-oss-120b"
+    expand_model: str = "groq/llama-3.1-8b-instant"
     summary_model: str = "groq/openai/gpt-oss-120b"
 
     # Rolling Chat Memory Configuration
@@ -31,12 +31,12 @@ class Settings(BaseSettings):
     temparature: float = 0.2
 
     rerank_model: str = "rerank-v4.0-pro"
-    rerank_top_n: int = 10
-    rerank_threshold: float = 0.68
+    rerank_top_n: int = 7
+    rerank_threshold: float = 0.70
     leaf_score_threshold: float = 0.00
 
     # Maximum characters (~4 chars per token) sampled across documents for global_synthesis queries
-    synthesis_max_chars: int = 8000
+    synthesis_max_chars: int = 15000
 
     embed_model: str = "embed-english-v3.0"
     embed_model_cache_dir: str = "./models"
