@@ -36,9 +36,11 @@ class Storage:
         )
 
         # Single Qdrant client for the entire process
+        # Inside Storage.__init__ in app/ingestion/qdrant_store.py:
         self.client = qdrant_client.QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key,
+            prefer_grpc=True,  # <-- Uses HTTP/2 binary Protobuf instead of REST JSON
             timeout=60,
         )
         self._vector_store = None
