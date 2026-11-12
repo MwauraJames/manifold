@@ -1,5 +1,7 @@
-# app/ingestion/storage.py
+# app/ingestion/qdrant_store.py
+import logging
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import qdrant_client
 from qdrant_client.http import models as rest
@@ -7,13 +9,11 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 from configs.config import Settings
 
-from pathlib import Path
-from dotenv import load_dotenv
-
 _APP_ENV = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_APP_ENV, override=True)
 load_dotenv(override=True)
 
+logger = logging.getLogger("manifold.qdrant")
 settings = Settings()
 FILTERABLE_FIELDS = ("user_id", "subject", "doc_id", "parent_id")
 
@@ -35,15 +35,15 @@ class Storage:
             settings, "qdrant_collection", "university_nodes"
         )
 
-        # Single Qdrant client for the entire process
-        # Inside Storage.__init__ in app/ingestion/qdrant_store.py:
+        # Use HTTPS REST (prefer_grpc=False) to avoid port 6334 firewall/gRPC timeouts
         self.client = qdrant_client.QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key,
-            prefer_grpc=True,  # <-- Uses HTTP/2 binary Protobuf instead of REST JSON
+            prefer_grpc=False,
             timeout=60,
         )
         self._vector_store = None
+        self._cached_index = None
 
         # Ensure keyword indexes exist on Qdrant Cloud if collection already exists
         self.ensure_payload_indexes()
@@ -67,18 +67,25 @@ class Storage:
 
     def ensure_payload_indexes(self):
         """
-        Create keyword payload indexes on multi-tenant filter fields.
-        Safe to call repeatedly after collection creation.
+        Checks existing payload schema and only creates missing keyword indexes.
         """
-        if not self.client.collection_exists(self.collection_name):
-            return
+        try:
+            if not self.client.collection_exists(self.collection_name):
+                return
 
-        for field in FILTERABLE_FIELDS:
-            self.client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name=field,
-                field_schema=rest.PayloadSchemaType.KEYWORD,
-            )
+            collection_info = self.client.get_collection(self.collection_name)
+            existing_schema = collection_info.payload_schema or {}
+
+            for field in FILTERABLE_FIELDS:
+                if field not in existing_schema:
+                    logger.info("[Qdrant] Creating keyword index for '%s'...", field)
+                    self.client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=field,
+                        field_schema=rest.PayloadSchemaType.KEYWORD,
+                    )
+        except Exception as e:
+            logger.warning("[Qdrant] Could not verify payload indexes at startup: %s", e)
 
     def count_points(self, doc_id: str | None = None) -> int:
         """Count total points in collection, or points matching a specific doc_id."""
