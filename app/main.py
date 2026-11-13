@@ -8,14 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from dependencies import logger, settings
 from pipelines.worker import ingestion_worker
 from routers import auth, chats, documents, subjects
-from generation.models import warm_up
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the sequential ingestion worker when FastAPI boots up."""
     logger.info("[Lifespan] Booting Manifold FastAPI server...")
-    await asyncio.to_thread(warm_up)
     worker_task = asyncio.create_task(ingestion_worker())
     yield
     logger.info("[Lifespan] Shutting down background ingestion worker...")

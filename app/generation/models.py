@@ -142,30 +142,6 @@ PROVIDER_CATALOG: Dict[str, dict] = {
                 "id": "groq/openai/gpt-oss-120b",
                 "name": "GPT-OSS 120B (Groq - Flagship Reasoning)",
             },
-            {
-                "id": "groq/openai/gpt-oss-20b",
-                "name": "GPT-OSS 20B (Groq - Ultra-Fast ~1000 tok/s)",
-            },
-            {
-                "id": "groq/qwen/qwen3.8-27b",
-                "name": "Qwen 3.8 27B (Groq - Multimodal Vision & Reasoning)",
-            },
-            {
-                "id": "groq/meta-models/muse-spark-open",
-                "name": "Muse Spark Open 816B MoE (Groq - Reasoning)",
-            },
-            {
-                "id": "groq/minimaxai/minimax-m2.7",
-                "name": "MiniMax M2.7 (Groq - 196K Context)",
-            },
-            {
-                "id": "groq/llama-3.3-70b-versatile",
-                "name": "Llama 3.3 70B Enterprise (Groq)",
-            },
-            {
-                "id": "groq/openai/gpt-oss-safeguard-20b",
-                "name": "Safety GPT-OSS 20B (Groq - Guardrail/Safe Chat)",
-            },
         ],
     },
     # ... keep ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, KIMI_API_KEY as-is
