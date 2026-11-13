@@ -10,8 +10,7 @@ from dependencies import _preview, active_streams, logger, mongo
 from generation.models import (
     discover_available_models,
     get_default_model,
-    refresh_models,
-    resolve_model_id,
+    resolve_model_config,
 )
 from pipelines.rag import response_pipeline, stream_response_pipeline
 from schemas import NewChatRequest, Question
@@ -26,11 +25,6 @@ def get_available_models():
     default_model = get_default_model()
     logger.debug("[Models:Discovery] count=%d | default=%s", len(models), default_model)
     return {"models": models, "default": default_model}
-
-@router.post("/models/refresh")
-def refresh_available_models(user_id: str = Depends(get_current_user)):
-    """Force a re-scan, e.g. right after starting Ollama. Rate-limited to once per 10 s."""
-    return {"models": refresh_models(), "default": get_default_model()}
 
 
 @router.post("/chats", status_code=201)
@@ -68,7 +62,8 @@ def ask(
     user_id: str = Depends(get_current_user),
 ):
     try:
-        selected_model = resolve_model_id(body.model)
+        resolved_cfg = resolve_model_config(body.model)
+        selected_model = resolved_cfg["model"]
     except ValueError as e:
         logger.warning("[Ask:ModelError] Invalid model '%s': %s", body.model, e)
         raise HTTPException(status_code=400, detail=str(e))
@@ -205,7 +200,8 @@ def edit_last_prompt(
     body.subject = existing_chat.get("subject")
 
     try:
-        selected_model = resolve_model_id(body.model)
+        resolved_cfg = resolve_model_config(body.model)
+        selected_model = resolved_cfg["model"]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
