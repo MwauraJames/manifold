@@ -12,26 +12,26 @@ ENV UV_COMPILE_BYTECODE=1 \
     PATH="/srv/app/.venv/bin:$PATH" \
     PORT=8000
 
-RUN useradd --create-home --uid 1000 appuser
+# 1. Create user and set up working directory permissions as root
+RUN useradd --create-home --uid 1000 appuser && \
+    mkdir -p /srv/app/models && \
+    chown -R appuser:appuser /srv/app
 
 WORKDIR /srv/app
 
-# 1. Install dependencies first
-COPY pyproject.toml uv.lock ./
+# Switch to non-root user before installing dependencies or copying files
+USER appuser
+
+# 2. Install dependencies (runs as appuser)
+COPY --chown=appuser:appuser pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 
-# 2. ONLY pre-bake the lightweight Sparse (Qdrant/bm25) ONNX model (~25MB)
-RUN mkdir -p /srv/app/models && \
-    python -c "from fastembed import SparseTextEmbedding; \
+# 3. Pre-bake the lightweight Sparse (Qdrant/bm25) ONNX model (~25MB)
+RUN python -c "from fastembed import SparseTextEmbedding; \
     SparseTextEmbedding('Qdrant/bm25', cache_dir='/srv/app/models')"
 
-# 3. Copy application code 
+# 4. Copy application code 
 COPY --chown=appuser:appuser . .
-
-# Ensure appuser owns everything
-RUN chown -R appuser:appuser /srv/app
-
-USER appuser
 
 EXPOSE 8000
 
