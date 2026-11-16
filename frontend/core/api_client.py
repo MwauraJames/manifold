@@ -557,6 +557,8 @@ def list_chats(subject: str | None = None) -> list[ChatSummary]:
     return result
 
 
+# In frontend/core/api_client.py (Replace get_chat_messages around line 418)
+
 def get_chat_messages(chat_id: str) -> list[dict[str, Any]]:
     response = _request("GET", f"/chats/{_q(chat_id)}/messages", retry_connection=True)
     payload = _json_or_error(response)
@@ -569,7 +571,12 @@ def get_chat_messages(chat_id: str) -> list[dict[str, Any]]:
             content = msg.get("text") or msg.get("message")
         if role not in {"user", "assistant"} or content is None:
             continue
-        cleaned.append({"role": role, "content": content})
+        item: dict[str, Any] = {"role": role, "content": content}
+        if msg.get("citations"):
+            item["citations"] = msg["citations"]
+        if msg.get("model"):
+            item["model"] = msg["model"]
+        cleaned.append(item)
     return cleaned
 
 
