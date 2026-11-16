@@ -69,18 +69,18 @@ def build_hybrid_retriever(
     )
 
 
+# app/retrieval/hybrid_search.py (Replace merge_leaves_to_parents)
 @traceable(run_type="retriever")
 def merge_leaves_to_parents(
     results,
     max_candidates: int = MAX_RERANK_CANDIDATES,
-) -> list[str]:
+) -> list[dict]:
     """
     1. Filters out low-scoring leaves below LEAF_SCORE_THRESHOLD (0.0 - 1.0 scale).
     2. Counts how many surviving leaves share each `parent_id`.
     3. If a parent has >= MIN_MERGE_LEAVES surviving leaves, merges them into
        a single 512-token `parent_text` for the reranker.
-    4. Caps returned candidates at `max_candidates` (default 10) to keep
-       Cohere reranking fast (<0.35s).
+    4. Returns structured dicts preserving document & section metadata alongside `text`.
     """
     if not results:
         return []
@@ -105,21 +105,35 @@ def merge_leaves_to_parents(
     }
 
     merged_parent_ids = set()
-    candidate_texts = []
+    candidates: list[dict] = []
 
     for r in qualified_leaves:
         meta = r.node.metadata or {}
         pid = meta.get("parent_id", r.node.node_id)
+        leaf_score = round(float(r.score), 4) if r.score is not None else None
 
         if pid in parents_to_merge:
-            if pid not in merged_parent_ids:
-                merged_parent_ids.add(pid)
-                parent_text = meta.get("parent_text") or r.node.get_content()
-                candidate_texts.append(parent_text)
+            if pid in merged_parent_ids:
+                continue
+            merged_parent_ids.add(pid)
+            text = meta.get("parent_text") or r.node.get_content()
+            chunk_type = "parent_512"
         else:
-            candidate_texts.append(r.node.get_content())
+            text = r.node.get_content()
+            chunk_type = "leaf_128"
 
-        if len(candidate_texts) >= max_candidates:
+        candidates.append({
+            "text": text,
+            "doc_id": meta.get("doc_id"),
+            "filename": meta.get("filename"),
+            "subject": meta.get("subject"),
+            "section": meta.get("section") or None,
+            "parent_id": pid,
+            "leaf_score": leaf_score,
+            "chunk_type": chunk_type,
+        })
+
+        if len(candidates) >= max_candidates:
             break
 
-    return candidate_texts
+    return candidates
