@@ -73,6 +73,7 @@ def ingest_pipeline(
             user_id=user_id,
             subject=subject,
             doc_id=doc_id,
+            filename=clean_name,  # <-- NEW: Persist filename in Qdrant payload
         )
         chunk_elapsed = time.perf_counter() - t_chunk
         logger.info(
