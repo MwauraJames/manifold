@@ -257,12 +257,30 @@ class MongoStore:
             self.chats.find(query, {"_id": 0}).sort("updated_at", DESCENDING)
         )
 
+    # Inside MongoStore in app/ingestion/mongo_store.py
+
+    def get_filenames_by_doc_ids(self, doc_ids: list[str]) -> dict[str, str]:
+        """Batch lookup mapping doc_id -> filename for backfilling legacy Qdrant nodes."""
+        clean_ids = [d for d in set(doc_ids) if d]
+        if not clean_ids:
+            return {}
+        cursor = self.documents.find(
+            {"doc_id": {"$in": clean_ids}},
+            {"_id": 0, "doc_id": 1, "filename": 1},
+        )
+        return {
+            doc["doc_id"]: doc.get("filename") or doc["doc_id"]
+            for doc in cursor
+            if doc.get("doc_id")
+        }
+
     def add_message(
         self,
         chat_id: str,
         user_id: str,
         role: str,
         content: str,
+        citations: Optional[list[dict]] = None,
     ) -> dict:
         """Append a message ('user' or 'assistant') to a chat session and bump chat updated_at."""
         now = datetime.now(timezone.utc)
@@ -273,6 +291,9 @@ class MongoStore:
             "content": content,
             "created_at": now,
         }
+        if citations is not None:
+            msg_doc["citations"] = citations
+
         self.messages.insert_one(msg_doc)
         self.chats.update_one(
             {"chat_id": chat_id},
@@ -535,6 +556,56 @@ class MongoStore:
                 sampled.append(blocks[idx])
 
         return "\n\n[...]\n\n".join(sampled)
+
+
+    def get_synthesis_sources(
+        self,
+        user_id: str,
+        subject: Optional[str] = None,
+        doc_id: Optional[str] = None,
+        max_total_chars: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Returns structured per-document stratified samples so Path A (global_synthesis)
+        can build numbered <source id="N"> blocks and UI citation cards.
+        """
+        budget = max_total_chars or getattr(settings, "synthesis_max_chars", 24000)
+
+        query: dict = {"user_id": user_id, "status": "ready"}
+        if doc_id:
+            query["doc_id"] = doc_id
+        elif subject:
+            query["subject"] = subject
+
+        docs = list(
+            self.documents.find(
+                query,
+                {"_id": 0, "doc_id": 1, "filename": 1, "subject": 1, "parsed_markdown": 1},
+            ).sort("created_at", ASCENDING)
+        )
+
+        valid_docs = [d for d in docs if (d.get("parsed_markdown") or "").strip()]
+        if not valid_docs:
+            return []
+
+        per_doc_budget = max(2500, budget // len(valid_docs))
+        sources: list[dict] = []
+
+        for d in valid_docs:
+            fname = d.get("filename") or d.get("doc_id")
+            subj = d.get("subject") or "General"
+            sampled_body = self._stratified_sample_markdown(
+                d["parsed_markdown"], budget_chars=per_doc_budget
+            )
+            sources.append({
+                "doc_id": d.get("doc_id"),
+                "filename": fname,
+                "subject": subj,
+                "section": "Full-Document Stratified Sample",
+                "text": sampled_body,
+            })
+
+        return sources
 
     def get_synthesis_context(
         self,
