@@ -1,6 +1,8 @@
+# frontend/ui/chat_ui.py
 from __future__ import annotations
 
 import html
+import re
 
 import streamlit as st
 
@@ -11,7 +13,7 @@ from core.utils import ACTIVE_STATUSES
 from ui import state
 from ui.state import ALL_DOCS
 
-POLL_S = 0.25  # how often the answer area refreshes while text is streaming in
+POLL_S = 0.25
 PLACEHOLDER = "Ask Manifold…"
 SUGGESTIONS = [
     "Summarise the key points",
@@ -19,8 +21,10 @@ SUGGESTIONS = [
     "List the action items and deadlines",
 ]
 
-
-# ------------------------------------------------------------------ helpers
+_PROTECTED_SPAN_RE = re.compile(
+    r"(```[\s\S]*?```|\$\$[\s\S]*?\$\$|`[^`\n]+`|\$[^$\n]+\$)"
+)
+_CITE_BRACKET_RE = re.compile(r"\[(\d{1,2})\]")
 
 
 def _model_label(model_id: str | None) -> str | None:
@@ -34,18 +38,144 @@ def _model_label(model_id: str | None) -> str | None:
     return model_id
 
 
+def _extract_citations(snap: JobSnapshot) -> list[dict]:
+    cites = getattr(snap, "citations", None)
+    if cites is None and isinstance(snap.meta, dict):
+        cites = snap.meta.get("citations")
+    return list(cites) if cites else []
+
+
+def _decorate_inline_citations(
+    text: str,
+    citations: list[dict] | None,
+    doc_names: dict[str, str] | None = None,
+) -> str:
+    if not text or not citations:
+        return text
+
+    cite_map: dict[int, dict] = {}
+    for c in citations:
+        try:
+            cid = int(c.get("id"))
+            cite_map[cid] = c
+        except (TypeError, ValueError):
+            continue
+
+    if not cite_map:
+        return text
+
+    def _replace_marker(match: re.Match) -> str:
+        num = int(match.group(1))
+        c = cite_map.get(num)
+        if not c:
+            return match.group(0)
+        doc_id = c.get("doc_id")
+        fname = (
+            c.get("filename")
+            or (doc_names.get(doc_id) if doc_names and doc_id else None)
+            or doc_id
+            or f"Source {num}"
+        )
+        section = c.get("section") or ""
+        score = c.get("score")
+        tooltip_parts = [str(fname)]
+        if section:
+            tooltip_parts.append(str(section))
+        if score is not None:
+            tooltip_parts.append(f"Score: {score:.2f}")
+        tooltip = html.escape(" • ".join(tooltip_parts), quote=True)
+        return f'<span class="cite-badge" title="{tooltip}">[{num}]</span>'
+
+    parts = _PROTECTED_SPAN_RE.split(text)
+    for i in range(0, len(parts), 2):
+        parts[i] = _CITE_BRACKET_RE.sub(_replace_marker, parts[i])
+    return "".join(parts)
+
+
+def _render_citations_drawer(
+    citations: list[dict] | None,
+    doc_names: dict[str, str] | None = None,
+) -> None:
+    if not citations:
+        return
+
+    cited_list = [c for c in citations if c.get("cited")]
+    ordered = cited_list + [c for c in citations if not c.get("cited")]
+
+    if cited_list:
+        label = (
+            f"Sources ({len(cited_list)} cited"
+            + (f" • {len(citations)} retrieved)" if len(citations) > len(cited_list) else ")")
+        )
+    else:
+        label = f"Retrieved Context ({len(citations)} passages)"
+
+    with st.expander(label, expanded=False, icon=":material/menu_book:"):
+        for c in ordered:
+            cid = c.get("id", "?")
+            doc_id = c.get("doc_id")
+            fname = (
+                c.get("filename")
+                or (doc_names.get(doc_id) if doc_names and doc_id else None)
+                or doc_id
+                or f"Source {cid}"
+            )
+            section = c.get("section") or "Passage"
+            score = c.get("score")
+            mode = c.get("retrieval_mode") or "fact_search"
+            is_cited = bool(c.get("cited"))
+            snippet = (c.get("snippet") or "").strip()
+
+            card_cls = "source-card is-cited" if is_cited else "source-card"
+            badge_html = (
+                '<span class="source-pill cited-pill">Cited in answer</span>'
+                if is_cited
+                else '<span class="source-pill">Retrieved</span>'
+            )
+            score_html = (
+                f'<span class="source-pill">Relevance: {score:.2f}</span>'
+                if isinstance(score, (int, float))
+                else (
+                    '<span class="source-pill">Synthesis Sample</span>'
+                    if mode == "global_synthesis"
+                    else ""
+                )
+            )
+
+            st.markdown(
+                f'<div class="{card_cls}">'
+                f'  <div class="source-card-header">'
+                f'    <div class="source-card-title">'
+                f'      <span class="cite-badge">[{html.escape(str(cid))}]</span> '
+                f'      {html.escape(str(fname))} '
+                f'      <span style="font-weight:400; opacity:0.75;">— {html.escape(str(section))}</span>'
+                f'    </div>'
+                f'    <div class="source-card-meta">{badge_html}{score_html}</div>'
+                f'  </div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if snippet:
+                st.caption(snippet)
+
+
 def _matches(job: StreamJob, subject: str) -> bool:
-    """Is this job's answer meant for the chat currently on screen?"""
     return job.view_id == st.session_state.get("chat_view_id") and job.subject == subject
 
 
 def _commit(job: StreamJob, snap: JobSnapshot) -> None:
-    """A finished answer becomes part of the on-screen history."""
     messages = st.session_state["chat_messages"]
     if job.kind == "edit" and len(messages) >= 2:
-        del messages[-2:]  # the backend deleted the old question and answer
+        del messages[-2:]
     messages.append({"role": "user", "content": job.prompt})
-    messages.append({"role": "assistant", "content": snap.text, "model": snap.meta.get("model")})
+    messages.append(
+        {
+            "role": "assistant",
+            "content": snap.text,
+            "model": snap.meta.get("model"),
+            "citations": _extract_citations(snap),
+        }
+    )
     chat_id = snap.meta.get("chat_id")
     if chat_id and not st.session_state.get("chat_id"):
         st.session_state["chat_id"] = chat_id
@@ -54,11 +184,6 @@ def _commit(job: StreamJob, snap: JobSnapshot) -> None:
 
 
 def _reconcile_job(subject: str) -> StreamJob | None:
-    """
-    Called at the top of every render. Finished answers are committed to the
-    history; jobs that belong to a chat the user has left are dropped (the
-    backend has saved the answer, so it shows up when that chat is reopened).
-    """
     job = st.session_state.get("stream_job")
     if job is None:
         return None
@@ -77,8 +202,6 @@ def _reconcile_job(subject: str) -> StreamJob | None:
 
 def _start_job(kind: str, prompt: str, subject: str, doc_id: str | None) -> bool:
     try:
-        # Refresh an expired token here, in the main thread, before the
-        # background thread starts using it.
         api_client.ensure_session()
     except ApiError as exc:
         if exc.status_code == 401:
@@ -106,11 +229,7 @@ def _queue_prompt(text: str) -> None:
     st.session_state["pending_prompt"] = text
 
 
-# ---------------------------------------------------------------- main view
-
-
 def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
-    # A different subject means a different conversation.
     if st.session_state.get("chat_subject") != subject_name:
         state.reset_chat()
         st.session_state["chat_subject"] = subject_name
@@ -123,14 +242,12 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
     failed_here = bool(here and snap.state == "failed")
 
     ready_docs = [d for d in subject_docs if d.status == "ready"]
-    processing = any(d.status in ACTIVE_STATUSES for d in subject_docs)
+    active_docs = [d for d in subject_docs if d.status in ACTIVE_STATUSES]
     doc_names = {d.doc_id: d.filename for d in subject_docs}
     chat_id = st.session_state.get("chat_id")
     input_disabled = (not ready_docs) or running_here or running_elsewhere
 
     messages = st.session_state["chat_messages"]
-    # While an edit is being regenerated (or failed after the backend already
-    # deleted the old pair), hide the old question and answer.
     hide_tail = bool(
         job is not None
         and here
@@ -146,7 +263,6 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
         and messages[-2]["role"] == "user"
     )
 
-    # ---- what to show
     new_chat_screen = not visible and not here
     typed = None
     if new_chat_screen:
@@ -156,30 +272,31 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
         _render_history(visible, can_act, subject_name, doc_names)
         if here:
             if running_here:
-                # Poll the background job. Nothing in this fragment can interrupt it.
                 runner = st.fragment(run_every=POLL_S)(_job_fragment)
-                runner(job)
+                runner(job, doc_names)
             elif failed_here:
                 _render_failure(job, snap)
-        # While an answer is being written the stop bar takes the composer's place.
         if not running_here:
             typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=input_disabled)
 
-    # ---- notices
     if running_elsewhere:
         st.info("An answer is still being written in another chat. Wait for it to finish.")
-    if not ready_docs:
-        if processing:
-            st.info("Your documents are still queued or being processed. You can ask once one is ready.")
-        else:
-            st.info("Add a document in the Documents panel to start asking questions.")
+    
+    if active_docs:
+        names = ", ".join(f"**{d.filename}**" for d in active_docs[:3])
+        if len(active_docs) > 3:
+            names += f" and {len(active_docs) - 3} more"
+        st.info(
+            f"⏳ Processing {names}. Deep OCR, vision transcription, and hybrid indexing "
+            "can take 1–2 minutes per file—feel free to wait or query already-ready documents.",
+            icon=":material/hourglass_top:",
+        )
+    elif not ready_docs:
+        st.info("Add a document in the Documents panel to start asking questions.")
 
     prompt = st.session_state.pop("pending_prompt", None) or typed
     if prompt and not input_disabled and _start_job("ask", prompt, subject_name, doc_id):
         st.rerun()
-
-
-# --------------------------------------------------------- new chat screen
 
 
 def _render_hero(
@@ -189,14 +306,12 @@ def _render_hero(
     disabled: bool,
     existing_chat: bool,
 ) -> tuple[str | None, str | None]:
-    """Centered greeting, input and suggestions, like a fresh Gemini chat."""
     with st.container(key="hero"):
         st.markdown(
             f'<div class="hero-title">Where should we start?</div>'
             f'<div class="hero-sub">Ask anything about <b>{html.escape(subject)}</b></div>',
             unsafe_allow_html=True,
         )
-        # Inside a container, st.chat_input stays in place instead of pinning to the bottom.
         typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=disabled)
 
         if existing_chat:
@@ -233,16 +348,12 @@ def _render_hero(
     return typed, doc_id
 
 
-# ------------------------------------------------------------ conversation
-
-
 def _user_bubble(text: str, key: str) -> None:
     with st.container(key=key):
         st.markdown(text)
 
 
 def _copy_popover(text: str, key: str) -> None:
-    # st.code has a built-in copy button.
     with st.popover("", icon=":material/content_copy:", type="tertiary", help="Copy", key=key):
         st.code(text, language=None, wrap_lines=True)
 
@@ -275,8 +386,12 @@ def _render_history(
                     )
                     _copy_popover(message["content"], "copy_user")
         else:
+            citations = message.get("citations") or []
+            rendered_md = _decorate_inline_citations(message["content"], citations, doc_names)
             with st.container(key=f"asst_msg_{index}"):
-                st.markdown(message["content"])
+                st.markdown(rendered_md, unsafe_allow_html=True)
+                if citations:
+                    _render_citations_drawer(citations, doc_names)
                 if message.get("model"):
                     st.caption(f"Answered by {_model_label(message['model'])}")
             if is_last_answer:
@@ -290,12 +405,8 @@ def _render_history(
                         type="tertiary",
                         help="Regenerate response",
                     ):
-                        # The backend replaces the last answer when the same question is "edited".
                         if _start_job("edit", question, subject, st.session_state.get("chat_doc_id")):
                             st.rerun()
-
-
-# ------------------------------------------------------------ edit last message
 
 
 def _begin_edit(text: str) -> None:
@@ -321,27 +432,30 @@ def _render_edit_form(subject: str) -> None:
                 st.rerun()
 
 
-# --------------------------------------------------------- the live answer
-
-
-def _job_fragment(job: StreamJob) -> None:
+def _job_fragment(job: StreamJob, doc_names: dict[str, str] | None = None) -> None:
     snap = job.snapshot()
     if snap.state != "running":
-        # Hand over to the main script, which commits the answer or shows the error.
         st.rerun(scope="app")
 
+    live_citations = _extract_citations(snap)
     _user_bubble(job.prompt, "user_msg_live")
     with st.container(key="asst_msg_live"):
         if snap.text:
-            st.markdown(snap.text + " ▌")
+            live_md = _decorate_inline_citations(snap.text + " ▌", live_citations, doc_names)
+            st.markdown(live_md, unsafe_allow_html=True)
 
-    # The stop bar replaces the composer while an answer is written. Stop only works
-    # once the model is writing: the backend resets its stop flag when generation
-    # begins, so a click during the search phase would be lost.
     chat_id = snap.meta.get("chat_id") or job.chat_id
     can_stop = bool(snap.text and chat_id)
     with st.container(key="stopbar", horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
-        st.markdown("Writing…" if snap.text else "Searching your documents…")
+        if snap.text:
+            status_text = (
+                f"Writing answer… ({len(live_citations)} sources cited)"
+                if live_citations
+                else "Writing answer…"
+            )
+        else:
+            status_text = getattr(snap, "status", None) or "Analyzing query & searching documents…"
+        st.markdown(status_text)
         clicked = st.button(
             "Stopping…" if job.stop_requested else "Stop",
             key="stop_generation",
@@ -366,7 +480,6 @@ def _render_failure(job: StreamJob, snap: JobSnapshot) -> None:
         if snap.text:
             st.markdown(snap.text)
         if error is not None and error.status_code == 400:
-            # Most likely the chosen model is no longer available: refresh the list.
             st.session_state.pop("_models", None)
             st.error(error.message)
         elif snap.meta or snap.text:
