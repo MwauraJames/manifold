@@ -58,7 +58,73 @@ BASE_CSS = """
 /* ---------- top bar ---------- */
 .st-key-topbar { margin-bottom: .2rem; }
 .st-key-topbar h4 { margin: 0; padding: 0; }
+
+/* ---------- inline citations & source drawer ---------- */
+.cite-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.14rem 0.42rem;
+  margin: 0 0.12rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  cursor: help;
+  vertical-align: super;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.cite-badge:hover {
+  background: rgba(99, 102, 241, 0.32);
+  transform: translateY(-1px);
+}
+.source-card {
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 12px;
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 0.55rem;
+  background: rgba(128, 128, 128, 0.06);
+}
+.source-card.is-cited {
+  border-left: 3px solid #6366f1;
+}
+.source-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.83rem;
+}
+.source-card-title {
+  font-weight: 600;
+}
+.source-card-meta {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+.source-pill {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: rgba(128, 128, 128, 0.16);
+}
+.source-pill.cited-pill {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  font-weight: 600;
+}
 """
+
+
 
 PANEL_CSS = f"""
 /* ---------- documents panel: docked on the right ---------- */
