@@ -1,3 +1,4 @@
+# frontend/ui/documents_ui.py
 from __future__ import annotations
 
 import streamlit as st
@@ -33,7 +34,6 @@ def _close_panel() -> None:
 
 
 def render_documents_panel(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
-    """The right-hand panel: upload files and manage the subject's documents."""
     with st.container(key="docs_panel"):
         title_col, close_col = st.columns([5, 1], vertical_alignment="center")
         title_col.markdown("#### Documents")
@@ -50,8 +50,6 @@ def render_documents_panel(subject_name: str, subject_docs: list[DocumentRecord]
         st.divider()
 
         active = any(d.status in ACTIVE_STATUSES for d in subject_docs)
-        # Only poll while something is queued or processing. The fragment re-fetches
-        # the list every few seconds without rerunning the whole app.
         runner = st.fragment(run_every=POLL_SECONDS if active else None)(_documents_fragment)
         runner(subject_name, active)
 
@@ -106,19 +104,18 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
             except ApiError as exc:
                 st.error(exc.message)
                 if exc.status_code and exc.status_code >= 500:
-                    # The server handles files one by one, so some may already be queued.
                     st.caption("Some files may already have been queued. Check the list below.")
                 return
         queued = len(result.documents) or count
-        st.session_state["uploader_version"] = version + 1  # clears the uploader
+        st.session_state["uploader_version"] = version + 1
         st.session_state["flash"] = (
-            f"{queued} file{'s' if queued != 1 else ''} queued. They'll be processed one at a time."
+            f"{queued} file{'s' if queued != 1 else ''} queued. "
+            "Vision AI and OCR can take 1–2 minutes per file—you can track progress below."
         )
         st.rerun()
 
 
 def _render_image_previews(accepted: list) -> None:
-    """Small thumbnails of the images about to be uploaded, so a wrong photo is caught early."""
     images = [f for f in accepted if is_image(f.name)]
     if not images:
         return
@@ -139,8 +136,6 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
     queued_n = sum(1 for d in docs if d.status == "queued")
     processing_n = sum(1 for d in docs if d.status == "processing")
     if was_active and not (queued_n or processing_n):
-        # Everything finished: rerun the whole app so the chat and the counts
-        # see the new "ready" documents.
         st.rerun(scope="app")
 
     if not docs:
@@ -148,12 +143,11 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
         return
 
     if queued_n or processing_n:
-        parts = []
-        if processing_n:
-            parts.append(f"{processing_n} processing")
-        if queued_n:
-            parts.append(f"{queued_n} queued")
-        st.caption(" · ".join(parts).capitalize() + ". Updates automatically.")
+        st.info(
+            "⏳ **Processing documents...** Deep OCR, vision parsing, and hybrid indexing "
+            "can take 1–2 minutes per file. You can close this panel and wait.",
+            icon=":material/hourglass_top:"
+        )
 
     for index, doc in enumerate(docs):
         name_col, menu_col = st.columns([7, 1], vertical_alignment="center")
