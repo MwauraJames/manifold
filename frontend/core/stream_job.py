@@ -17,6 +17,7 @@ class JobSnapshot:
     text: str
     meta: dict[str, Any] = field(default_factory=dict)
     error: ApiError | None = None
+    citations: list[dict[str, Any]] = field(default_factory=list)
 
 
 class StreamJob:
@@ -53,6 +54,7 @@ class StreamJob:
         self._lock = threading.Lock()
         self._text = ""
         self._meta: dict[str, Any] = {}
+        self._citations: list[dict[str, Any]] = []
         self._state = "running"
         self._error: ApiError | None = None
         self._thread: threading.Thread | None = None
@@ -63,7 +65,13 @@ class StreamJob:
 
     def snapshot(self) -> JobSnapshot:
         with self._lock:
-            return JobSnapshot(self._state, self._text, dict(self._meta), self._error)
+            return JobSnapshot(
+                state=self._state,
+                text=self._text,
+                meta=dict(self._meta),
+                error=self._error,
+                citations=list(self._citations),
+            )
 
     def _run(self, token: str | None) -> None:
         try:
@@ -84,10 +92,22 @@ class StreamJob:
                 with self._lock:
                     if event.kind == "meta":
                         self._meta.update(event.data)
+                    elif event.kind == "citations":
+                        self._citations = list(event.data.get("citations") or [])
                     elif event.kind == "token":
                         self._text += event.data.get("content") or ""
+                    elif event.kind == "done":
+                        if event.data.get("chat_id"):
+                            self._meta["chat_id"] = event.data["chat_id"]
+                        if event.data.get("citations") is not None:
+                            self._citations = list(event.data["citations"])
+                        self._state = "done"
+
+            # Safeguard if stream exits cleanly without setting state
             with self._lock:
-                self._state = "done"
+                if self._state == "running":
+                    self._state = "done"
+
         except ApiError as exc:
             with self._lock:
                 self._error, self._state = exc, "failed"
