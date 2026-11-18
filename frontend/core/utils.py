@@ -13,10 +13,7 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 # File types the uploader accepts. Keep this in sync with ALLOWED_UPLOAD_EXTENSIONS
 # in the backend's main.py: it rejects the WHOLE batch if one file has another type.
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
-ALLOWED_EXTENSIONS = (".pdf", *IMAGE_EXTENSIONS)
 
-# Sent explicitly so we never depend on the OS/Python mimetypes table (older Pythons
-# don't know .webp). The backend passes this on so it can route images vs PDFs.
 CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".png": "image/png",
@@ -34,6 +31,12 @@ CONTENT_TYPES = {
     ".odt": "application/vnd.oasis.opendocument.text",
     ".ods": "application/vnd.oasis.opendocument.spreadsheet",
 }
+
+# Automatically derive ALLOWED_EXTENSIONS from CONTENT_TYPES so they never get out of sync:
+ALLOWED_EXTENSIONS = tuple(CONTENT_TYPES.keys())
+
+# Streamlit's st.file_uploader `type=` expects extensions WITHOUT the leading dot:
+STREAMLIT_UPLOAD_TYPES = [ext.lstrip(".") for ext in ALLOWED_EXTENSIONS]
 
 # A document is "active" while the server still has work to do on it.
 ACTIVE_STATUSES = {"queued", "processing"}
