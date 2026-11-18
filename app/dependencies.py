@@ -60,7 +60,7 @@ active_streams: dict[str, bool] = {}
 UPLOAD_DIR = Path(settings.upload_dir)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md", ".csv", ".json", ".ppt", ".pptx", ".docx", ".xlsx", ".odt", ".ods"}
 
 # ---------- Clients & Warmup ----------
 logger.info("[Init] Initializing Qdrant Storage, MongoStore, Embed model, LlamaCloud, and Cohere...")
