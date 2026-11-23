@@ -80,6 +80,7 @@ class MongoStore:
         self.chats.create_index([("user_id", ASCENDING), ("subject", ASCENDING)])
 
         self.messages.create_index([("chat_id", ASCENDING), ("created_at", ASCENDING)])
+        self.messages.create_index([("chat_id", ASCENDING), ("_id", ASCENDING)])
 
         # Unique index per (user_id, name) on subjects
         self.subjects.create_index(
@@ -471,47 +472,77 @@ class MongoStore:
 
     def get_chat_memory_state(self, chat_id: str) -> dict:
         """
-        Returns the rolling summary, how many messages are already summarized,
-        and the list of unsummarized messages in chronological order.
+        Returns the rolling summary, cursor metadata, and unsummarized messages
+        in deterministic chronological order. Uses `last_summarized_id` when present,
+        falling back to legacy `summarized_count` for older chat sessions.
         """
         chat = self.chats.find_one(
             {"chat_id": chat_id},
-            {"_id": 0, "summary": 1, "summarized_count": 1},
+            {"_id": 0, "summary": 1, "summarized_count": 1, "last_summarized_id": 1},
         ) or {}
 
         summary = chat.get("summary")
-        summarized_count = chat.get("summarized_count", 0)
+        summarized_count = int(chat.get("summarized_count") or 0)
+        last_summarized_id = chat.get("last_summarized_id")
 
-        # Fetch only the messages that occurred AFTER the last summary cutoff
-        cursor = (
-            self.messages.find(
-                {"chat_id": chat_id},
-                {"_id": 0, "role": 1, "content": 1, "created_at": 1},
+        cursor_oid = None
+        if last_summarized_id:
+            try:
+                cursor_oid = ObjectId(last_summarized_id)
+            except Exception:
+                cursor_oid = None
+
+        projection = {"_id": 1, "role": 1, "content": 1, "created_at": 1}
+        sort_order = [("created_at", ASCENDING), ("_id", ASCENDING)]
+
+        if cursor_oid is not None:
+            cursor = self.messages.find(
+                {"chat_id": chat_id, "_id": {"$gt": cursor_oid}},
+                projection,
+            ).sort(sort_order)
+        else:
+            cursor = (
+                self.messages.find({"chat_id": chat_id}, projection)
+                .sort(sort_order)
+                .skip(max(0, summarized_count))
             )
-            .sort("created_at", ASCENDING)
-            .skip(summarized_count)
-        )
-        unsummarized_messages = list(cursor)
+
+        unsummarized_messages = [
+            {
+                "id": str(doc["_id"]),
+                "role": doc.get("role", "user"),
+                "content": doc.get("content", ""),
+                "created_at": doc.get("created_at"),
+            }
+            for doc in cursor
+        ]
 
         return {
             "summary": summary,
             "summarized_count": summarized_count,
+            "last_summarized_id": last_summarized_id,
             "unsummarized_messages": unsummarized_messages,
         }
 
     def update_chat_summary(
-        self, chat_id: str, new_summary: str, new_summarized_count: int
+        self,
+        chat_id: str,
+        new_summary: str,
+        new_summarized_count: int,
+        last_summarized_id: Optional[str] = None,
     ):
-        """Replaces the previous summary with the new summary and advances the pointer."""
+        """Atomically stores a valid summary and advances both cursor fields."""
+        update_fields: dict = {
+            "summary": new_summary,
+            "summarized_count": new_summarized_count,
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if last_summarized_id:
+            update_fields["last_summarized_id"] = last_summarized_id
+
         self.chats.update_one(
             {"chat_id": chat_id},
-            {
-                "$set": {
-                    "summary": new_summary,
-                    "summarized_count": new_summarized_count,
-                    "updated_at": datetime.now(timezone.utc),
-                }
-            },
+            {"$set": update_fields},
         )
 
     # ---------------- Stratified Synthesis Context (Adaptive RAG) ----------------
@@ -1077,13 +1108,51 @@ class MongoStore:
         return "\n\n---\n\n".join(parts)
     
     def delete_last_interaction(self, chat_id: str):
-        """Deletes the most recent user message and any subsequent assistant messages."""
+        """
+        Deletes the most recent user message and any subsequent assistant messages
+        deterministically by `_id`, keeping memory cursors consistent if needed.
+        """
         last_user_msg = self.messages.find_one(
             {"chat_id": chat_id, "role": "user"},
-            sort=[("created_at", DESCENDING)]
+            sort=[("created_at", DESCENDING), ("_id", DESCENDING)],
         )
-        if last_user_msg:
-            self.messages.delete_many({
+        if not last_user_msg:
+            return
+
+        cutoff_oid = last_user_msg["_id"]
+        self.messages.delete_many(
+            {
                 "chat_id": chat_id,
-                "created_at": {"$gte": last_user_msg["created_at"]}
-            })
+                "_id": {"$gte": cutoff_oid},
+            }
+        )
+
+        chat = self.chats.find_one(
+            {"chat_id": chat_id},
+            {"_id": 0, "summarized_count": 1, "last_summarized_id": 1},
+        )
+        if not chat:
+            return
+
+        updates: dict = {}
+        remaining_count = self.messages.count_documents({"chat_id": chat_id})
+        summarized_count = int(chat.get("summarized_count") or 0)
+        if summarized_count > remaining_count:
+            updates["summarized_count"] = remaining_count
+
+        last_sum_id = chat.get("last_summarized_id")
+        if last_sum_id:
+            try:
+                if ObjectId(last_sum_id) >= cutoff_oid:
+                    prev_msg = self.messages.find_one(
+                        {"chat_id": chat_id},
+                        {"_id": 1},
+                        sort=[("created_at", DESCENDING), ("_id", DESCENDING)],
+                    )
+                    updates["last_summarized_id"] = str(prev_msg["_id"]) if prev_msg else None
+            except Exception:
+                updates["last_summarized_id"] = None
+
+        if updates:
+            updates["updated_at"] = datetime.now(timezone.utc)
+            self.chats.update_one({"chat_id": chat_id}, {"$set": updates})
