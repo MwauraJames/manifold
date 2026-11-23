@@ -80,10 +80,12 @@ def _attach_run_metadata(
 def _build_numbered_context(
     raw_sources: list[dict],
     retrieval_mode: str,
+    document_outline: str = "",
 ) -> tuple[str, list[dict]]:
     """
     Wraps each retrieved chunk in a numbered <source id="N"> XML block for the LLM
     and constructs the clean citation metadata list for the UI and MongoDB.
+    Optionally prepends a <document_outline> block for global_synthesis coverage.
     """
     if not raw_sources:
         return "", []
@@ -97,6 +99,14 @@ def _build_numbered_context(
     filename_map = mongo.get_filenames_by_doc_ids(missing_doc_ids) if missing_doc_ids else {}
 
     context_blocks: list[str] = []
+    if document_outline:
+        context_blocks.append(
+            '<document_outline note="Table of contents across uploaded documents for structural overview. '
+            'Cite specific <source id=\'N\'> blocks for all factual claims, formulas, and questions.">\n'
+            f"{document_outline}\n"
+            "</document_outline>"
+        )
+
     citations: list[dict] = []
 
     for idx, src in enumerate(raw_sources, start=1):
@@ -182,22 +192,31 @@ def retrieval_pipeline(
         rt.tags.append(f"intent:{intent}")
 
     if intent == "global_synthesis":
-        yield ("status", "Sampling full-document sections for global synthesis…")
+        yield ("status", "Stratified-sampling documents for global synthesis…")
         t_syn = time.perf_counter()
-        synthesis_sources = mongo.get_synthesis_sources(
+        synthesis_sources, document_outline = mongo.get_synthesis_bundle(
             user_id=user_id,
             subject=subject,
             doc_id=doc_id,
         )
         if synthesis_sources:
             formatted_ctx, citations = _build_numbered_context(
-                synthesis_sources, retrieval_mode="global_synthesis"
+                synthesis_sources,
+                retrieval_mode="global_synthesis",
+                document_outline=document_outline,
             )
-            yield ("status", f"Prepared {len(citations)} document samples — generating response…")
+            logger.info(
+                "[Retrieval:GlobalSynthesis] (%.2fs) blocks=%d | outline_chars=%d | ctx_chars=%d",
+                time.perf_counter() - t_syn,
+                len(citations),
+                len(document_outline),
+                len(formatted_ctx),
+            )
+            yield ("status", f"Prepared {len(citations)} stratified document sections — generating response…")
             yield ("result", (formatted_ctx, citations))
             return
 
-        logger.warning("[Retrieval:Path A Empty] No ready documents found; falling back to Path B.")
+        logger.warning("[Retrieval:GlobalSynthesis Empty] No ready documents found; falling back to fact_search.")
 
     yield ("status", "Searching Qdrant hybrid index (Dense + BM25)…")
     t_ret = time.perf_counter()
@@ -209,7 +228,7 @@ def retrieval_pipeline(
         doc_id=doc_id,
     )
     leaf_results = retriever.retrieve(expanded_query)
-    
+
     if not leaf_results:
         yield ("result", ("", []))
         return
@@ -238,6 +257,13 @@ def retrieval_pipeline(
 
     final_ctx, citations = _build_numbered_context(
         surviving_sources, retrieval_mode="fact_search"
+    )
+    logger.info(
+        "[Retrieval:FactSearch] (%.2fs) leaves=%d | parents=%d | reranked=%d",
+        time.perf_counter() - t_ret,
+        len(leaf_results),
+        len(candidates),
+        len(citations),
     )
     yield ("status", f"Selected {len(citations)} verified sources — generating answer…")
     yield ("result", (final_ctx, citations))
