@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     leaf_score_threshold: float = 0.00
 
     # Maximum characters (~4 chars per token) sampled across documents for global_synthesis queries
-    synthesis_max_chars: int = 15000
+    synthesis_max_chars: int = 25000
 
     embed_model: str = "embed-english-v3.0"
     embed_model_cache_dir: str = "./models"
