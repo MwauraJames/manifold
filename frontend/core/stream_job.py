@@ -18,6 +18,7 @@ class JobSnapshot:
     meta: dict[str, Any] = field(default_factory=dict)
     error: ApiError | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
+    status: str | None = None
 
 
 class StreamJob:
@@ -55,6 +56,7 @@ class StreamJob:
         self._text = ""
         self._meta: dict[str, Any] = {}
         self._citations: list[dict[str, Any]] = []
+        self._status: str | None = None
         self._state = "running"
         self._error: ApiError | None = None
         self._thread: threading.Thread | None = None
@@ -71,13 +73,18 @@ class StreamJob:
                 meta=dict(self._meta),
                 error=self._error,
                 citations=list(self._citations),
+                status=self._status,
             )
 
     def _run(self, token: str | None) -> None:
         try:
             if self.kind == "edit":
                 events = api_client.edit_last_stream(
-                    self.chat_id or "", self.prompt, model=self.model, token=token
+                    self.chat_id or "",
+                    self.prompt,
+                    doc_id=self.doc_id,
+                    model=self.model,
+                    token=token,
                 )
             else:
                 events = api_client.ask_stream(
@@ -92,6 +99,8 @@ class StreamJob:
                 with self._lock:
                     if event.kind == "meta":
                         self._meta.update(event.data)
+                    elif event.kind == "status":
+                        self._status = event.data.get("step") or self._status
                     elif event.kind == "citations":
                         self._citations = list(event.data.get("citations") or [])
                     elif event.kind == "token":
