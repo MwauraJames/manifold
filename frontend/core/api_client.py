@@ -598,9 +598,12 @@ def ask(
     """Non-streaming fallback. The UI uses ask_stream()."""
     if not subject:
         raise ApiError("A subject is required.")
-    payload: dict[str, Any] = {"query": query, "subject": subject, "stream": False}
-    if doc_id:
-        payload["doc_id"] = doc_id
+    payload: dict[str, Any] = {
+        "query": query,
+        "subject": subject,
+        "doc_id": doc_id,
+        "stream": False,
+    }
     if chat_id:
         payload["chat_id"] = chat_id
     if model:
@@ -728,9 +731,12 @@ def ask_stream(
     """POST /ask with stream=true."""
     if not subject:
         raise ApiError("A subject is required.")
-    payload: dict[str, Any] = {"query": query, "subject": subject, "stream": True}
-    if doc_id:
-        payload["doc_id"] = doc_id
+    payload: dict[str, Any] = {
+        "query": query,
+        "subject": subject,
+        "doc_id": doc_id,
+        "stream": True,
+    }
     if chat_id:
         payload["chat_id"] = chat_id
     if model:
@@ -741,19 +747,23 @@ def ask_stream(
 def edit_last_stream(
     chat_id: str,
     query: str,
+    doc_id: str | None = None,
     model: str | None = None,
     token: str | None = None,
 ) -> Iterator[StreamEvent]:
     """
     POST /chats/{chat_id}/edit_last: the backend deletes the chat's last
-    question and answer, then streams a new answer to the edited question.
-    The chat's subject and document scope are taken from the chat itself.
+    question and answer, updates the chat's document scope if changed,
+    then streams a new answer to the edited question.
     """
-    payload: dict[str, Any] = {"query": query, "stream": True}
+    payload: dict[str, Any] = {
+        "query": query,
+        "doc_id": doc_id,
+        "stream": True,
+    }
     if model:
         payload["model"] = model
     return _stream_events(f"/chats/{_q(chat_id)}/edit_last", payload, token)
-
 
 def stop_generation(chat_id: str) -> None:
     """Ask the backend to stop the answer currently streaming for this chat."""
