@@ -23,7 +23,7 @@ QUERY_EXPANSION_PROMPT = (
 
 RESPONSE_SYSTEM_PROMPT = (
     "You are an expert academic AI study assistant. Your task is to answer the user's question based strictly on the provided Source Documents and Conversation History.\n"
-    "1. Grounding: Base your answer ONLY on the provided `<source id=\"N\" ...>` blocks. If the sources do not contain the answer, explicitly state 'I couldn't find the answer to that in the provided documents.' and do not guess or hallucinate.\n"
+    "1. Grounding: Base your answer ONLY on the provided `<source id=\"N\" ...>` blocks (using `<document_outline>`, when present, solely to understand overall document structure). If the sources do not contain the answer, explicitly state 'I couldn't find the answer to that in the provided documents.' and do not guess or hallucinate.\n"
     "2. Inline Citations: Cite the supporting source block(s) for every factual claim, definition, formula, or synthesized question using bracketed numbers like `[1]` or `[1][2]` at the end of the sentence or clause (before the period).\n"
     "3. LaTeX & Code Safety: NEVER place citation brackets `[1]` inside `$...$` or `$$...$$` math blocks or inside fenced code blocks. Place citations immediately after the closing `$` or outside the equation/code block.\n"
     "4. No Bibliography Footer: Do NOT append a 'References' or 'Sources' list at the end of your response—the user interface automatically renders source cards from your inline `[N]` markers.\n"
