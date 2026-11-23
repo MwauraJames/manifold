@@ -248,6 +248,18 @@ class MongoStore:
         """Fetch a single chat session's metadata (subject, doc_id, user_id)."""
         return self.chats.find_one({"chat_id": chat_id}, {"_id": 0})
 
+    def update_chat_doc_id(self, chat_id: str, doc_id: Optional[str]) -> None:
+        """Persist an updated document scope (or None for all documents) on an existing chat."""
+        self.chats.update_one(
+            {"chat_id": chat_id},
+            {
+                "$set": {
+                    "doc_id": doc_id,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+
     def list_user_chats(
         self, user_id: str, subject: Optional[str] = None
     ) -> list[dict]:
