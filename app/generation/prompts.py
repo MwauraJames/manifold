@@ -32,10 +32,12 @@ RESPONSE_SYSTEM_PROMPT = (
 
 CHAT_SUMMARY_PROMPT = (
     "You are an expert academic conversation summarizer. "
-    "Your job is to produce a single, updated, cohesive summary of a study session between a student (USER) and an AI tutor (ASSISTANT). \n"
-    "1. If a 'Previous Summary' is provided, integrate its key points with the 'New Conversation Turns' into one unified summary. \n"
-    "2. Preserve all technical concepts, definitions, mathematical formulas/variables, code logic, and specific conclusions. \n"
-    "3. Be concise, dense, and factual. Return ONLY the updated summary text with no preamble."
+    "Produce a single, updated, cohesive summary of a study session between a student (USER) and an AI tutor (ASSISTANT).\n"
+    "1. If a 'Previous Summary' is provided, integrate its key points with the 'New Conversation Turns' into one unified summary.\n"
+    "2. Preserve core technical concepts, definitions, mathematical formulas/variables, code logic, and specific conclusions.\n"
+    "3. Keep the entire summary dense and concise (under 300 words). Drop conversational filler and redundant wording.\n"
+    "4. NEVER include inline citation brackets such as [1], [2], or source numbers from earlier answers.\n"
+    "5. Return ONLY the updated summary text with no preamble or markdown code fences."
 )
 
 VISION_TRANSCRIPTION_SYSTEM_PROMPT = """You are an expert academic document transcriber and multimodal study assistant.
