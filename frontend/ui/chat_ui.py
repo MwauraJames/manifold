@@ -179,8 +179,10 @@ def _commit(job: StreamJob, snap: JobSnapshot) -> None:
     chat_id = snap.meta.get("chat_id")
     if chat_id and not st.session_state.get("chat_id"):
         st.session_state["chat_id"] = chat_id
-        st.session_state["chat_doc_id"] = snap.meta.get("doc_id") or job.doc_id
         st.session_state["chat_subject"] = job.subject
+
+    committed_doc_id = snap.meta.get("doc_id") if "doc_id" in snap.meta else job.doc_id
+    st.session_state["chat_doc_id"] = committed_doc_id
 
 
 def _reconcile_job(subject: str) -> StreamJob | None:
@@ -229,6 +231,54 @@ def _queue_prompt(text: str) -> None:
     st.session_state["pending_prompt"] = text
 
 
+def _on_scope_change() -> None:
+    """Keeps chat_doc_id synced before render_topbar() runs on the next rerun."""
+    choice = st.session_state.get("scope_doc", ALL_DOCS)
+    st.session_state["chat_doc_id"] = None if choice == ALL_DOCS else choice
+
+
+def _render_scope_selector(
+    ready_docs: list[DocumentRecord],
+    doc_names: dict[str, str],
+    disabled: bool,
+) -> str | None:
+    options = [ALL_DOCS] + [d.doc_id for d in ready_docs]
+    desired = st.session_state.get("chat_doc_id") or ALL_DOCS
+    if desired not in options:
+        desired = ALL_DOCS
+        st.session_state["chat_doc_id"] = None
+    if st.session_state.get("scope_doc") != desired:
+        st.session_state["scope_doc"] = desired
+
+    choice = st.selectbox(
+        "Ask about",
+        options,
+        format_func=lambda v: (
+            "Ask about: all documents"
+            if v == ALL_DOCS
+            else f"Ask about: {doc_names.get(v, v)}"
+        ),
+        key="scope_doc",
+        disabled=disabled,
+        label_visibility="collapsed",
+        on_change=_on_scope_change,
+    )
+    return None if choice == ALL_DOCS else choice
+
+
+def _render_chat_scope_bar(
+    ready_docs: list[DocumentRecord],
+    doc_names: dict[str, str],
+    disabled: bool,
+) -> str | None:
+    if not ready_docs:
+        return None
+    with st.container(key="chat_scope_bar"):
+        col, _ = st.columns([3, 2])
+        with col:
+            return _render_scope_selector(ready_docs, doc_names, disabled)
+
+
 def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
     if st.session_state.get("chat_subject") != subject_name:
         state.reset_chat()
@@ -266,9 +316,8 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
     new_chat_screen = not visible and not here
     typed = None
     if new_chat_screen:
-        typed, doc_id = _render_hero(subject_name, ready_docs, doc_names, input_disabled, bool(chat_id))
+        typed, doc_id = _render_hero(subject_name, ready_docs, doc_names, input_disabled)
     else:
-        doc_id = st.session_state.get("chat_doc_id") if chat_id else (job.doc_id if job else None)
         _render_history(visible, can_act, subject_name, doc_names)
         if here:
             if running_here:
@@ -276,12 +325,16 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
                 runner(job, doc_names)
             elif failed_here:
                 _render_failure(job, snap)
+
         if not running_here:
+            doc_id = _render_chat_scope_bar(ready_docs, doc_names, input_disabled)
             typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=input_disabled)
+        else:
+            doc_id = st.session_state.get("chat_doc_id")
 
     if running_elsewhere:
         st.info("An answer is still being written in another chat. Wait for it to finish.")
-    
+
     if active_docs:
         names = ", ".join(f"**{d.filename}**" for d in active_docs[:3])
         if len(active_docs) > 3:
@@ -304,7 +357,6 @@ def _render_hero(
     ready_docs: list[DocumentRecord],
     doc_names: dict[str, str],
     disabled: bool,
-    existing_chat: bool,
 ) -> tuple[str | None, str | None]:
     with st.container(key="hero"):
         st.markdown(
@@ -314,25 +366,9 @@ def _render_hero(
         )
         typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=disabled)
 
-        if existing_chat:
-            scope_doc = st.session_state.get("chat_doc_id")
-            label = doc_names.get(scope_doc, scope_doc) if scope_doc else "All documents"
-            st.caption(f"About: {label}")
-            doc_id = scope_doc
-        else:
-            options = [ALL_DOCS] + [d.doc_id for d in ready_docs]
-            if st.session_state.get("scope_doc") not in options:
-                st.session_state["scope_doc"] = ALL_DOCS
-            _, middle, _ = st.columns([1, 3, 1])
-            with middle:
-                choice = st.selectbox(
-                    "Ask about",
-                    options,
-                    format_func=lambda v: "Ask about: all documents" if v == ALL_DOCS else f"Ask about: {doc_names.get(v, v)}",
-                    key="scope_doc",
-                    label_visibility="collapsed",
-                )
-            doc_id = None if choice == ALL_DOCS else choice
+        _, middle, _ = st.columns([1, 3, 1])
+        with middle:
+            doc_id = _render_scope_selector(ready_docs, doc_names, disabled)
 
         if not disabled:
             with st.container(key="suggestions"):
