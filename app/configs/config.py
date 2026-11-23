@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     mongo_db_name: str = "study_assistant"
 
     # Utility LLM Models (passed to resolve_model_config)
-    expand_model: str = "groq/llama-3.1-8b-instant"
+    expand_model: str = "groq/openai/gpt-oss-120b"
     summary_model: str = "groq/openai/gpt-oss-120b"
 
     # Rolling Chat Memory Configuration
