@@ -66,28 +66,38 @@ def route_and_expand_query(
     query: str,
     chat_history: list[dict] | None = None,
     model_name: str | None = None,
+    summary: str | None = None,
 ) -> dict[str, str]:
     """
     Sends every query (including Turn 1) to the router/expansion LLM to:
       1. Decide the final retrieval intent ('fact_search' vs 'global_synthesis').
       2. Rewrite/expand the user's question into a self-contained search query.
+    Keeps `summary` separate from `chat_history[-6:]` so the summary is never sliced off.
     """
     clean_query = query.strip()
 
-    if chat_history:
-        recent_slice = chat_history[-6:]
+    raw_turns = [
+        m
+        for m in (chat_history or [])
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    recent_slice = raw_turns[-6:]
+
+    prompt_parts: list[str] = []
+    if summary and summary.strip():
+        prompt_parts.append(f"Summary of Earlier Conversation:\n{summary.strip()}")
+
+    if recent_slice:
         history_text = "\n".join(
             f"{m['role'].upper()}: {m['content']}" for m in recent_slice
         )
-        user_prompt = (
-            f"Conversation History:\n{history_text}\n\n"
-            f"User's Latest Question: {clean_query}"
-        )
-    else:
-        user_prompt = (
-            "Conversation History:\n(None — first turn)\n\n"
-            f"User's Latest Question: {clean_query}"
-        )
+        prompt_parts.append(f"Recent Conversation History:\n{history_text}")
+
+    if not prompt_parts:
+        prompt_parts.append("Conversation History:\n(None — first turn)")
+
+    prompt_parts.append(f"User's Latest Question: {clean_query}")
+    user_prompt = "\n\n".join(prompt_parts)
 
     messages = [
         {"role": "system", "content": QUERY_EXPANSION_PROMPT},
@@ -115,6 +125,12 @@ def expand_query(
     query: str,
     chat_history: list[dict] | None = None,
     model_name: str | None = None,
+    summary: str | None = None,
 ) -> str:
     """Backward-compatible helper returning only the expanded query string."""
-    return route_and_expand_query(query, chat_history, model_name)["expanded_query"]
+    return route_and_expand_query(
+        query,
+        chat_history=chat_history,
+        model_name=model_name,
+        summary=summary,
+    )["expanded_query"]
