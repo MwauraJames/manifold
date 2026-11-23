@@ -80,10 +80,11 @@ def ask(
     if existing_chat:
         if existing_chat.get("user_id") != user_id:
             raise HTTPException(403, "Not authorized to access this chat.")
-        if not doc_id and existing_chat.get("doc_id"):
-            doc_id = existing_chat["doc_id"]
         if not subject and existing_chat.get("subject"):
             subject = existing_chat["subject"]
+        # Honor mid-chat document switches, including switching back to all documents (None)
+        if doc_id != existing_chat.get("doc_id"):
+            mongo.update_chat_doc_id(chat_id, doc_id)
     else:
         # Only create subject & chat session in MongoDB Atlas if this is a brand-new chat
         if subject:
@@ -196,7 +197,15 @@ def edit_last_prompt(
     if not existing_chat or existing_chat.get("user_id") != user_id:
         raise HTTPException(403, "Not authorized to access this chat.")
 
-    body.doc_id = existing_chat.get("doc_id")
+    if "doc_id" in body.model_fields_set:
+        doc_id = None if body.doc_id in (None, "", "string") else body.doc_id
+        if doc_id != existing_chat.get("doc_id"):
+            mongo.update_chat_doc_id(chat_id, doc_id)
+    else:
+        doc_id = existing_chat.get("doc_id")
+
+    body.doc_id = doc_id
+    body.subject = existing_chat.get("subject")
     body.subject = existing_chat.get("subject")
 
     try:
