@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     mongo_db_name: str = "study_assistant"
 
     # Utility LLM Models (passed to resolve_model_config)
-    expand_model: str = "groq/openai/gpt-oss-120b"
-    summary_model: str = "groq/openai/gpt-oss-120b"
+    expand_model: str = "groq/openai/gpt-oss-20b"
+    summary_model: str = "groq/openai/gpt-oss-20b"
 
     # Rolling Chat Memory Configuration
     chat_history_limit: int = 6   # Trigger summarization when unsummarized messages exceed this
