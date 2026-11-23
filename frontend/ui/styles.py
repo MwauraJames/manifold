@@ -122,6 +122,15 @@ BASE_CSS = """
   color: #818cf8;
   font-weight: 600;
 }
+/* ---------- mid-chat document scope selector ---------- */
+.st-key-chat_scope_bar {
+  margin-top: .75rem;
+  margin-bottom: .35rem;
+}
+.st-key-chat_scope_bar [data-baseweb="select"] > div {
+  border-radius: 12px;
+  font-size: .88rem;
+}
 """
 
 
@@ -135,6 +144,7 @@ PANEL_CSS = f"""
   border-left: 1px solid rgba(128,128,128,.25);
 }}
 [data-testid="stMain"] {{ padding-right: {PANEL_W}; }}
+
 """
 
 
