@@ -15,7 +15,8 @@ def _defaults() -> dict:
         "show_new_subject": False,
         "show_delete_subject": False,
         "chat_id": None,        # None until the first /ask creates the chat
-        "chat_doc_id": None,    # scope of an existing chat (None = all documents)
+        "chat_doc_id": None,  
+        "scope_doc": ALL_DOCS,  # scope of an existing chat (None = all documents)
         "chat_subject": None,   # subject the chat state belongs to
         "chat_messages": [],
         "uploader_version": 0,
