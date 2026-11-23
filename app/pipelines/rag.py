@@ -18,7 +18,8 @@ from dependencies import (
 )
 from generation.response import (
     final_response,
-    prepare_rolling_memory,
+    get_rolling_memory,
+    schedule_rolling_memory_update,
     stream_final_response,
 )
 from ingestion.chunk import _extract_section_header
@@ -168,6 +169,7 @@ def retrieval_pipeline(
     user_id: str,
     subject: Optional[str] = None,
     doc_id: Optional[str] = None,
+    summary: Optional[str] = None,
 ):
     """
     Yields ('status', message) during execution to update the UI step-by-step,
@@ -175,7 +177,11 @@ def retrieval_pipeline(
     """
     yield ("status", "Analyzing query intent…")
     t_route = time.perf_counter()
-    route_info = route_and_expand_query(query=query, chat_history=chat_history)
+    route_info = route_and_expand_query(
+        query=query,
+        chat_history=chat_history,
+        summary=summary,
+    )
     intent = route_info["intent"]
     expanded_query = route_info["expanded_query"]
     logger.info(
@@ -283,19 +289,16 @@ def response_pipeline(
     target_model = model_name or body.model
     _attach_run_metadata(user_id, chat_id, body, target_model)
 
-    summary, recent_messages = prepare_rolling_memory(mongo=mongo, chat_id=chat_id)
-    history_for_expansion = []
-    if summary:
-        history_for_expansion.append({"role": "system", "content": f"Summary of earlier conversation: {summary}"})
-    history_for_expansion.extend(recent_messages)
+    summary, recent_messages = get_rolling_memory(mongo=mongo, chat_id=chat_id)
 
     context, citations = "", []
     for item_type, payload in retrieval_pipeline(
         query=body.query,
-        chat_history=history_for_expansion,
+        chat_history=recent_messages,
         user_id=user_id,
         subject=body.subject,
         doc_id=body.doc_id,
+        summary=summary,
     ):
         if item_type == "result":
             context, citations = payload
@@ -315,6 +318,7 @@ def response_pipeline(
 
     mongo.add_message(chat_id, user_id, "user", body.query)
     mongo.add_message(chat_id, user_id, "assistant", answer, citations=citations)
+    schedule_rolling_memory_update(mongo=mongo, chat_id=chat_id)
 
     return {
         "messages": [{"role": "assistant", "content": answer}],
@@ -346,21 +350,17 @@ def stream_response_pipeline(
     })
     yield f"data: {meta_payload}\n\n"
 
-    yield f"data: {json.dumps({'type': 'status', 'step': 'Preparing conversation memory…'})}\n\n"
-    summary, recent_messages = prepare_rolling_memory(mongo=mongo, chat_id=chat_id)
-
-    history_for_expansion = []
-    if summary:
-        history_for_expansion.append({"role": "system", "content": f"Summary of earlier conversation: {summary}"})
-    history_for_expansion.extend(recent_messages)
+    yield f"data: {json.dumps({'type': 'status', 'step': 'Loading conversation memory…'})}\n\n"
+    summary, recent_messages = get_rolling_memory(mongo=mongo, chat_id=chat_id)
 
     context, citations = "", []
     for item_type, payload in retrieval_pipeline(
         query=body.query,
-        chat_history=history_for_expansion,
+        chat_history=recent_messages,
         user_id=user_id,
         subject=body.subject,
         doc_id=body.doc_id,
+        summary=summary,
     ):
         if item_type == "status":
             yield f"data: {json.dumps({'type': 'status', 'step': payload})}\n\n"
@@ -401,5 +401,8 @@ def stream_response_pipeline(
 
     mongo.add_message(chat_id, user_id, "user", body.query)
     mongo.add_message(chat_id, user_id, "assistant", full_answer, citations=citations)
+
+    # Trigger before yielding `done` so the thread starts even if the client disconnects immediately
+    schedule_rolling_memory_update(mongo=mongo, chat_id=chat_id)
 
     yield f"data: {json.dumps({'type': 'done', 'chat_id': chat_id, 'citations': citations})}\n\n"
