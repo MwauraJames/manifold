@@ -1,6 +1,8 @@
 # frontend/ui/documents_ui.py
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from core import api_client
@@ -21,11 +23,11 @@ from core.utils import (
     plan_upload,
 )
 
-STATUS_LABEL = {
-    "queued": ":gray[Queued]",
-    "processing": ":orange[Processing…]",
-    "ready": ":green[Ready]",
-    "failed": ":red[Failed]",
+STATUS_TEXT = {
+    "queued": "Queued",
+    "processing": "Processing…",
+    "ready": "Ready",
+    "failed": "Failed",
 }
 
 
@@ -62,10 +64,9 @@ def _render_upload(subject: str, existing_docs: list[DocumentRecord]) -> None:
         accept_multiple_files=True,
         key=f"uploader_{version}",
         help=(
-            "PDFs and images (PNG, JPG, WebP). Images are read for their text and content, "
+            "PDFs, office docs, and images (PNG, JPG, WebP). Images are read for their text and content, "
             "so photos of notes, slides and diagrams work. "
-            f"Up to {MAX_FILES_PER_BATCH} files at a time, {MAX_UPLOAD_MB} MB each. "
-            "They are processed one after another."
+            f"Up to {MAX_FILES_PER_BATCH} files at a time, {MAX_UPLOAD_MB} MB each."
         ),
     )
     if not uploaded:
@@ -144,19 +145,28 @@ def _documents_fragment(subject: str, was_active: bool) -> None:
 
     if queued_n or processing_n:
         st.info(
-            "⏳ **Processing documents...** Deep OCR, vision parsing, and hybrid indexing "
+            "**Processing documents…** Deep OCR, vision parsing, and hybrid indexing "
             "can take 1–2 minutes per file. You can close this panel and wait.",
-            icon=":material/hourglass_top:"
+            icon=":material/hourglass_top:",
         )
 
     for index, doc in enumerate(docs):
         name_col, menu_col = st.columns([7, 1], vertical_alignment="center")
         with name_col:
-            icon = ":material/image:" if is_image(doc.filename) else ":material/description:"
-            st.markdown(f"{icon} **{doc.filename}**")
-            status_line = STATUS_LABEL.get(doc.status, doc.status)
+            safe_name = html.escape(doc.filename)
+            dot_cls = doc.status if doc.status in STATUS_TEXT else "queued"
+            status_text = STATUS_TEXT.get(doc.status, doc.status)
             uploaded_at = format_date(doc.created_at)
-            st.caption(f"{status_line} · {uploaded_at}" if uploaded_at else status_line)
+            meta = f"{status_text} · {uploaded_at}" if uploaded_at else status_text
+
+            st.markdown(
+                f'<div class="doc-row-title" title="{safe_name}">{safe_name}</div>'
+                f'<div class="doc-row-meta">'
+                f'  <span class="doc-dot {dot_cls}"></span>'
+                f'  <span>{html.escape(meta)}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
             if doc.status == "failed" and doc.error:
                 st.caption(doc.error[:140])
             age = minutes_since(doc.updated_at)
