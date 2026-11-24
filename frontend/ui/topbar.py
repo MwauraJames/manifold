@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 
 from core.api_client import DocumentRecord
-from ui import models
 
 
 def _toggle_docs(open_now: bool) -> None:
@@ -16,27 +15,22 @@ def render_topbar(subject: str, subject_docs: list[DocumentRecord], docs_open: b
     scope = None
     if chat_id:
         scope_doc = st.session_state.get("chat_doc_id")
-        scope = doc_names.get(scope_doc, scope_doc) if scope_doc else "All documents"
+        if scope_doc:
+            scope = doc_names.get(scope_doc, scope_doc)
 
     with st.container(key="topbar"):
-        left, middle, right = st.columns([5, 3, 3], vertical_alignment="center")
-        _render_topbar_cells(subject, scope, docs_open, len(subject_docs), left, middle, right)
-
-
-def _render_topbar_cells(subject, scope, docs_open, doc_count, left, middle, right) -> None:
-    with left:
-        st.markdown(f"#### {subject}")
-        if scope:
-            st.caption(f"About: {scope}")
-    with middle:
-        models.render_model_picker()
-    with right:
-        st.button(
-            f"Documents ({doc_count})",
-            icon=":material/description:",
-            key="docs_toggle",
-            on_click=_toggle_docs,
-            args=(docs_open,),
-            type="primary" if docs_open else "secondary",
-            use_container_width=True,
-        )
+        left, right = st.columns([7, 2.4], vertical_alignment="center")
+        with left:
+            st.markdown(f"#### {subject}")
+            if scope:
+                st.caption(f"Focused on: {scope}")
+        with right:
+            st.button(
+                f"Documents ({len(subject_docs)})",
+                icon=":material/description:",
+                key="docs_toggle",
+                on_click=_toggle_docs,
+                args=(docs_open,),
+                type="secondary",
+                use_container_width=True,
+            )
