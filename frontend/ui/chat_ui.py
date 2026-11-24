@@ -10,7 +10,7 @@ from core import api_client
 from core.api_client import ApiError, DocumentRecord
 from core.stream_job import JobSnapshot, StreamJob
 from core.utils import ACTIVE_STATUSES
-from ui import state
+from ui import models, state
 from ui.state import ALL_DOCS
 
 POLL_S = 0.25
@@ -30,9 +30,9 @@ _CITE_BRACKET_RE = re.compile(r"\[(\d{1,2})\]")
 def _model_label(model_id: str | None) -> str | None:
     if not model_id:
         return None
-    models = st.session_state.get("_models")
-    if models:
-        for option in models.models:
+    cached = st.session_state.get("_models")
+    if cached:
+        for option in cached.models:
             if model_id in (option.id, option.name):
                 return option.name
     return model_id
@@ -231,6 +231,10 @@ def _queue_prompt(text: str) -> None:
     st.session_state["pending_prompt"] = text
 
 
+def _toggle_docs_panel(subject_docs: list[DocumentRecord]) -> None:
+    st.session_state["docs_panel"] = not state.docs_panel_open(subject_docs)
+
+
 def _on_scope_change() -> None:
     """Keeps chat_doc_id synced before render_topbar() runs on the next rerun."""
     choice = st.session_state.get("scope_doc", ALL_DOCS)
@@ -250,33 +254,52 @@ def _render_scope_selector(
     if st.session_state.get("scope_doc") != desired:
         st.session_state["scope_doc"] = desired
 
+    count = len(ready_docs)
+    all_label = f"All documents ({count})" if count else "No documents ready"
     choice = st.selectbox(
-        "Ask about",
+        "Document scope",
         options,
-        format_func=lambda v: (
-            "Ask about: all documents"
-            if v == ALL_DOCS
-            else f"Ask about: {doc_names.get(v, v)}"
-        ),
+        format_func=lambda v: all_label if v == ALL_DOCS else doc_names.get(v, v),
         key="scope_doc",
-        disabled=disabled,
+        disabled=disabled or not ready_docs,
         label_visibility="collapsed",
         on_change=_on_scope_change,
     )
     return None if choice == ALL_DOCS else choice
 
 
-def _render_chat_scope_bar(
+def _render_composer(
+    subject_docs: list[DocumentRecord],
     ready_docs: list[DocumentRecord],
     doc_names: dict[str, str],
     disabled: bool,
-) -> str | None:
-    if not ready_docs:
-        return None
-    with st.container(key="chat_scope_bar"):
-        col, _ = st.columns([3, 2])
-        with col:
-            return _render_scope_selector(ready_docs, doc_names, disabled)
+    *,
+    docked: bool,
+) -> tuple[str | None, str | None]:
+    card_key = "composer_docked" if docked else "composer_hero"
+    with st.container(key=card_key):
+        typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=disabled)
+        with st.container(key="composer_toolbar"):
+            add_col, scope_col, model_col = st.columns(
+                [0.6, 4.7, 4.7],
+                vertical_alignment="center",
+                gap="small",
+            )
+            with add_col:
+                st.button(
+                    "",
+                    icon=":material/add:",
+                    key="composer_add_docs",
+                    type="tertiary",
+                    help="Add or manage documents",
+                    on_click=_toggle_docs_panel,
+                    args=(subject_docs,),
+                )
+            with scope_col:
+                doc_id = _render_scope_selector(ready_docs, doc_names, disabled)
+            with model_col:
+                models.render_model_picker()
+    return typed, doc_id
 
 
 def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
@@ -316,7 +339,9 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
     new_chat_screen = not visible and not here
     typed = None
     if new_chat_screen:
-        typed, doc_id = _render_hero(subject_name, ready_docs, doc_names, input_disabled)
+        typed, doc_id = _render_hero(
+            subject_name, subject_docs, ready_docs, doc_names, input_disabled
+        )
     else:
         _render_history(visible, can_act, subject_name, doc_names)
         if here:
@@ -327,8 +352,9 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
                 _render_failure(job, snap)
 
         if not running_here:
-            doc_id = _render_chat_scope_bar(ready_docs, doc_names, input_disabled)
-            typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=input_disabled)
+            typed, doc_id = _render_composer(
+                subject_docs, ready_docs, doc_names, input_disabled, docked=True
+            )
         else:
             doc_id = st.session_state.get("chat_doc_id")
 
@@ -340,12 +366,12 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
         if len(active_docs) > 3:
             names += f" and {len(active_docs) - 3} more"
         st.info(
-            f"⏳ Processing {names}. Deep OCR, vision transcription, and hybrid indexing "
+            f"Processing {names}. Deep OCR, vision transcription, and hybrid indexing "
             "can take 1–2 minutes per file—feel free to wait or query already-ready documents.",
             icon=":material/hourglass_top:",
         )
     elif not ready_docs:
-        st.info("Add a document in the Documents panel to start asking questions.")
+        st.info("Click **+** in the chat box or open **Documents** to add files and start asking questions.")
 
     prompt = st.session_state.pop("pending_prompt", None) or typed
     if prompt and not input_disabled and _start_job("ask", prompt, subject_name, doc_id):
@@ -354,6 +380,7 @@ def render_chat(subject_name: str, subject_docs: list[DocumentRecord]) -> None:
 
 def _render_hero(
     subject: str,
+    subject_docs: list[DocumentRecord],
     ready_docs: list[DocumentRecord],
     doc_names: dict[str, str],
     disabled: bool,
@@ -364,20 +391,21 @@ def _render_hero(
             f'<div class="hero-sub">Ask anything about <b>{html.escape(subject)}</b></div>',
             unsafe_allow_html=True,
         )
-        typed = st.chat_input(PLACEHOLDER, key="chat_prompt", disabled=disabled)
-
-        _, middle, _ = st.columns([1, 3, 1])
-        with middle:
-            doc_id = _render_scope_selector(ready_docs, doc_names, disabled)
+        typed, doc_id = _render_composer(
+            subject_docs, ready_docs, doc_names, disabled, docked=False
+        )
 
         if not disabled:
-            with st.container(key="suggestions"):
+            with st.container(
+                key="suggestions",
+                horizontal=True,
+                horizontal_alignment="center",
+            ):
                 for index, text in enumerate(SUGGESTIONS):
                     st.button(
                         text,
                         key=f"suggest_{index}",
-                        icon=":material/subdirectory_arrow_right:",
-                        type="tertiary",
+                        type="secondary",
                         on_click=_queue_prompt,
                         args=(text,),
                     )
